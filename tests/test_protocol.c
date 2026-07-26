@@ -15,7 +15,7 @@ static void test_header_round_trip(void) {
         .timestamp_ns = 0x1112131415161718ull,
     };
     const uint8_t expected[ROADCAST_HEADER_SIZE] = {
-        0x52, 0x44, 0x43, 0x54, 0x00, 0x02, 0x00, 0x06, 0x10, 0x20, 0x30,
+        0x52, 0x44, 0x43, 0x54, 0x00, 0x03, 0x00, 0x06, 0x10, 0x20, 0x30,
         0x40, 0x00, 0x00, 0x50, 0x60, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
         0x07, 0x08, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
     };
@@ -52,22 +52,25 @@ static void test_handshake_round_trip(void) {
 
     uint8_t welcome[ROADCAST_WELCOME_SIZE];
     assert(roadcast_encode_welcome(
-               welcome, 60, 111, 815, ROADCAST_MAX_PAYLOAD,
+               welcome, 60, 111, 815, 4064, 2016,
                ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN, 1,
                UINT64_C(0x123456789abcdef0)) == sizeof(welcome));
     uint32_t hz;
     uint32_t frame_count;
     uint32_t signal_count;
-    uint32_t max_payload;
+    uint32_t max_request_payload;
+    uint32_t max_response_payload;
     uint32_t schema_version;
     uint64_t schema_hash;
     assert(roadcast_decode_welcome(welcome, sizeof(welcome), &hz, &frame_count,
-                                   &signal_count, &max_payload, &capabilities,
+                                   &signal_count, &max_request_payload,
+                                   &max_response_payload, &capabilities,
                                    &schema_version, &schema_hash) == 0);
     assert(hz == 60);
     assert(frame_count == 111);
     assert(signal_count == 815);
-    assert(max_payload == ROADCAST_MAX_PAYLOAD);
+    assert(max_request_payload == 4064);
+    assert(max_response_payload == 2016);
     assert(capabilities == (ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN));
     assert(schema_version == 1);
     assert(schema_hash == UINT64_C(0x123456789abcdef0));
@@ -84,94 +87,145 @@ static void test_signal_batch_round_trip(void) {
     roadcast_signal_value_t input[3] = {
         {.raw = UINT64_C(0x0102030405060708),
          .physical = 12.5,
-         .valid = 1,
+         .first_observed_ns = 10,
+         .last_change_ns = 20,
+         .state = ROADCAST_OBSERVATION_VALID,
          .calibrated = 1},
-        {.raw = 7, .physical = -3.25, .valid = 0, .calibrated = 0},
-        {.raw = UINT64_MAX, .physical = -1.0, .valid = 1, .calibrated = 0},
+        {.raw = 7,
+         .physical = -3.25,
+         .state = ROADCAST_OBSERVATION_NEVER_OBSERVED,
+         .calibrated = 0},
+        {.raw = UINT64_MAX,
+         .physical = -1.0,
+         .first_observed_ns = 30,
+         .last_change_ns = 40,
+         .state = ROADCAST_OBSERVATION_INVALID,
+         .calibrated = 0},
     };
     uint32_t indices[] = {2, 0};
     uint8_t encoded[ROADCAST_BATCH_PREFIX_SIZE + 2 * ROADCAST_SIGNAL_WIRE_SIZE];
-    size_t length = roadcast_encode_signal_batch(encoded, sizeof(encoded), 99,
-                                                 input, indices, 2);
+    size_t length = roadcast_encode_signal_batch(
+        encoded, sizeof(encoded), 99, 3, UINT32_MAX, input, indices, 2);
     assert(length == sizeof(encoded));
 
     roadcast_signal_update_t output[2];
     uint64_t sample_sequence;
+    uint32_t total_count;
+    uint32_t start_index;
     size_t count;
     assert(roadcast_decode_signal_batch(encoded, length, &sample_sequence,
-                                        output, 2, &count) == 0);
+                                        &total_count, &start_index, output, 2,
+                                        &count) == 0);
     assert(sample_sequence == 99);
+    assert(total_count == 3);
+    assert(start_index == UINT32_MAX);
     assert(count == 2);
     assert(output[0].index == 2);
     assert(output[0].value.raw == input[2].raw);
     assert(output[0].value.physical == input[2].physical);
+    assert(output[0].value.state == input[2].state);
+    assert(output[0].value.first_observed_ns == input[2].first_observed_ns);
+    assert(output[0].value.last_change_ns == input[2].last_change_ns);
     assert(output[1].index == 0);
     assert(output[1].value.raw == input[0].raw);
     assert(output[1].value.physical == input[0].physical);
 
     encoded[ROADCAST_BATCH_PREFIX_SIZE + 4] = 2;
     assert(roadcast_decode_signal_batch(encoded, length, &sample_sequence,
-                                        output, 2, &count) < 0);
+                                        &total_count, &start_index, output, 2,
+                                        &count) == 0);
+    encoded[ROADCAST_BATCH_PREFIX_SIZE + 4] = 4;
+    assert(roadcast_decode_signal_batch(encoded, length, &sample_sequence,
+                                        &total_count, &start_index, output, 2,
+                                        &count) < 0);
 }
 
 static void test_frame_batch_round_trip(void) {
     roadcast_frame_t input[3] = {
-        {.can_id = 0x085, .present = 1, .data = {0, 1, 2, 3, 4, 5, 6, 7}},
-        {.can_id = 0x123, .present = 0, .data = {8, 9, 10, 11, 12, 13, 14, 15}},
+        {.can_id = 0x085,
+         .state = ROADCAST_OBSERVATION_VALID,
+         .data = {0, 1, 2, 3, 4, 5, 6, 7},
+         .first_observed_ns = 10,
+         .last_change_ns = 20},
+        {.can_id = 0x123,
+         .state = ROADCAST_OBSERVATION_UNAVAILABLE,
+         .data = {8, 9, 10, 11, 12, 13, 14, 15}},
         {.can_id = 0x7df,
-         .present = 1,
-         .data = {16, 17, 18, 19, 20, 21, 22, 23}},
+         .state = ROADCAST_OBSERVATION_NEVER_OBSERVED,
+         .data = {16, 17, 18, 19, 20, 21, 22, 23},
+         .first_observed_ns = 30,
+         .last_change_ns = 40},
     };
     uint16_t indices[] = {2, 0};
     uint8_t encoded[ROADCAST_BATCH_PREFIX_SIZE + 2 * ROADCAST_FRAME_WIRE_SIZE];
     size_t encoded_length = roadcast_encode_frame_batch(
-        encoded, sizeof(encoded), 42, input, indices, 2);
+        encoded, sizeof(encoded), 42, 3, UINT32_MAX, input, indices, 2);
     assert(encoded_length == sizeof(encoded));
 
     roadcast_frame_t output[2];
     uint64_t sample_sequence;
+    uint32_t total_count;
+    uint32_t start_index;
     size_t frame_count;
-    assert(roadcast_decode_frame_batch(encoded, encoded_length,
-                                       &sample_sequence, output, 2,
-                                       &frame_count) == 0);
+    assert(roadcast_decode_frame_batch(
+               encoded, encoded_length, &sample_sequence, &total_count,
+               &start_index, output, 2, &frame_count) == 0);
     assert(sample_sequence == 42);
     assert(frame_count == 2);
+    assert(total_count == 3);
+    assert(start_index == UINT32_MAX);
     assert(output[0].can_id == input[2].can_id);
     assert(memcmp(output[0].data, input[2].data, sizeof(output[0].data)) == 0);
+    assert(output[0].state == input[2].state);
+    assert(output[0].first_observed_ns == input[2].first_observed_ns);
     assert(output[1].can_id == input[0].can_id);
     assert(memcmp(output[1].data, input[0].data, sizeof(output[1].data)) == 0);
 
-    assert(roadcast_encode_frame_batch(encoded, sizeof(encoded) - 1, 42, input,
-                                       indices, 2) == 0);
-    assert(roadcast_decode_frame_batch(encoded, encoded_length - 1,
-                                       &sample_sequence, output, 2,
-                                       &frame_count) < 0);
-    assert(roadcast_decode_frame_batch(encoded, encoded_length,
-                                       &sample_sequence, output, 1,
-                                       &frame_count) < 0);
+    assert(roadcast_encode_frame_batch(encoded, sizeof(encoded) - 1, 42, 3,
+                                       UINT32_MAX, input, indices, 2) == 0);
+    assert(roadcast_decode_frame_batch(
+               encoded, encoded_length - 1, &sample_sequence, &total_count,
+               &start_index, output, 2, &frame_count) < 0);
+    assert(roadcast_decode_frame_batch(
+               encoded, encoded_length, &sample_sequence, &total_count,
+               &start_index, output, 1, &frame_count) < 0);
 
-    encoded[10] = 1;
-    assert(roadcast_decode_frame_batch(encoded, encoded_length,
-                                       &sample_sequence, output, 2,
-                                       &frame_count) < 0);
-    encoded[10] = 0;
-    encoded[ROADCAST_BATCH_PREFIX_SIZE + 2] = 2;
-    assert(roadcast_decode_frame_batch(encoded, encoded_length,
-                                       &sample_sequence, output, 2,
-                                       &frame_count) < 0);
+    encoded[18] = 1;
+    assert(roadcast_decode_frame_batch(
+               encoded, encoded_length, &sample_sequence, &total_count,
+               &start_index, output, 2, &frame_count) < 0);
+    encoded[18] = 0;
+    encoded[ROADCAST_BATCH_PREFIX_SIZE + 2] = 3;
+    assert(roadcast_decode_frame_batch(
+               encoded, encoded_length, &sample_sequence, &total_count,
+               &start_index, output, 2, &frame_count) < 0);
 }
 
 static void test_heartbeat_round_trip(void) {
-    uint8_t encoded[16];
-    assert(roadcast_encode_heartbeat(encoded, 1234, 56) == sizeof(encoded));
+    uint8_t encoded[ROADCAST_HEARTBEAT_SIZE];
+    assert(roadcast_encode_heartbeat(encoded, 1234, 99, 56, 7, 59950,
+                                     ROADCAST_SOURCE_STATE_DEGRADED) ==
+           sizeof(encoded));
     uint64_t sample_sequence;
+    uint64_t change_sequence;
     uint64_t dropped_batches;
+    uint64_t coalesced_samples;
+    uint32_t effective_hz_millihz;
+    uint8_t source_state;
     assert(roadcast_decode_heartbeat(encoded, sizeof(encoded), &sample_sequence,
-                                     &dropped_batches) == 0);
+                                     &change_sequence, &dropped_batches,
+                                     &coalesced_samples, &effective_hz_millihz,
+                                     &source_state) == 0);
     assert(sample_sequence == 1234);
+    assert(change_sequence == 99);
     assert(dropped_batches == 56);
+    assert(coalesced_samples == 7);
+    assert(effective_hz_millihz == 59950);
+    assert(source_state == ROADCAST_SOURCE_STATE_DEGRADED);
     assert(roadcast_decode_heartbeat(encoded, sizeof(encoded) - 1,
-                                     &sample_sequence, &dropped_batches) < 0);
+                                     &sample_sequence, &change_sequence,
+                                     &dropped_batches, &coalesced_samples,
+                                     &effective_hz_millihz, &source_state) < 0);
 }
 
 int main(void) {

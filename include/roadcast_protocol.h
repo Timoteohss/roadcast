@@ -5,12 +5,13 @@
 #include <stdint.h>
 
 #define ROADCAST_MAGIC 0x52444354u
-#define ROADCAST_PROTOCOL_VERSION 2u
+#define ROADCAST_PROTOCOL_VERSION 3u
 #define ROADCAST_HEADER_SIZE 32u
-#define ROADCAST_FRAME_WIRE_SIZE 12u
-#define ROADCAST_BATCH_PREFIX_SIZE 12u
-#define ROADCAST_SIGNAL_WIRE_SIZE 24u
-#define ROADCAST_WELCOME_SIZE 32u
+#define ROADCAST_FRAME_WIRE_SIZE 28u
+#define ROADCAST_BATCH_PREFIX_SIZE 20u
+#define ROADCAST_SIGNAL_WIRE_SIZE 40u
+#define ROADCAST_WELCOME_SIZE 36u
+#define ROADCAST_HEARTBEAT_SIZE 40u
 #define ROADCAST_SCHEMA_REQUEST_SIZE 4u
 #define ROADCAST_SCHEMA_CHUNK_PREFIX_SIZE 24u
 #define ROADCAST_SCHEMA_ENTRY_FIXED_SIZE 44u
@@ -59,10 +60,25 @@ enum roadcast_schema_flags {
     ROADCAST_SCHEMA_FLAG_CALIBRATED = 1u << 1,
 };
 
+enum roadcast_observation_state {
+    ROADCAST_OBSERVATION_UNAVAILABLE = 0,
+    ROADCAST_OBSERVATION_NEVER_OBSERVED = 1,
+    ROADCAST_OBSERVATION_VALID = 2,
+    ROADCAST_OBSERVATION_INVALID = 3,
+};
+
+enum roadcast_source_state {
+    ROADCAST_SOURCE_STATE_UNAVAILABLE = 0,
+    ROADCAST_SOURCE_STATE_AVAILABLE = 1,
+    ROADCAST_SOURCE_STATE_DEGRADED = 2,
+};
+
 typedef struct {
     uint16_t can_id;
-    uint8_t present;
+    uint8_t state;
     uint8_t data[8];
+    uint64_t first_observed_ns;
+    uint64_t last_change_ns;
 } roadcast_frame_t;
 
 typedef struct {
@@ -77,7 +93,9 @@ typedef struct {
 typedef struct {
     uint64_t raw;
     double physical;
-    uint8_t valid;
+    uint64_t first_observed_ns;
+    uint64_t last_change_ns;
+    uint8_t state;
     uint8_t calibrated;
 } roadcast_signal_value_t;
 
@@ -113,12 +131,16 @@ int roadcast_decode_hello(const uint8_t *payload, size_t len,
 
 size_t roadcast_encode_welcome(uint8_t out[ROADCAST_WELCOME_SIZE], uint32_t hz,
                                uint32_t frame_count, uint32_t signal_count,
-                               uint32_t max_payload, uint32_t capabilities,
-                               uint32_t schema_version, uint64_t schema_hash);
+                               uint32_t max_request_payload,
+                               uint32_t max_response_payload,
+                               uint32_t capabilities, uint32_t schema_version,
+                               uint64_t schema_hash);
 int roadcast_decode_welcome(const uint8_t *payload, size_t len, uint32_t *hz,
                             uint32_t *frame_count, uint32_t *signal_count,
-                            uint32_t *max_payload, uint32_t *capabilities,
-                            uint32_t *schema_version, uint64_t *schema_hash);
+                            uint32_t *max_request_payload,
+                            uint32_t *max_response_payload,
+                            uint32_t *capabilities, uint32_t *schema_version,
+                            uint64_t *schema_hash);
 
 size_t roadcast_encode_index_request(uint8_t out[ROADCAST_SCHEMA_REQUEST_SIZE],
                                      uint32_t start_index);
@@ -134,26 +156,37 @@ int roadcast_decode_schema_chunk(const uint8_t *payload, size_t len,
 
 size_t roadcast_encode_frame_batch(uint8_t *out, size_t cap,
                                    uint64_t sample_sequence,
+                                   uint32_t total_count, uint32_t start_index,
                                    const roadcast_frame_t *frames,
                                    const uint16_t *indices, size_t count);
 int roadcast_decode_frame_batch(const uint8_t *payload, size_t len,
                                 uint64_t *sample_sequence,
+                                uint32_t *total_count, uint32_t *start_index,
                                 roadcast_frame_t *frames, size_t frame_cap,
                                 size_t *frame_count);
 
 size_t roadcast_encode_signal_batch(uint8_t *out, size_t capacity,
                                     uint64_t sample_sequence,
+                                    uint32_t total_count, uint32_t start_index,
                                     const roadcast_signal_value_t *signals,
                                     const uint32_t *indices, size_t count);
 int roadcast_decode_signal_batch(const uint8_t *payload, size_t len,
                                  uint64_t *sample_sequence,
+                                 uint32_t *total_count, uint32_t *start_index,
                                  roadcast_signal_update_t *updates,
                                  size_t update_capacity, size_t *update_count);
 
-size_t roadcast_encode_heartbeat(uint8_t out[16], uint64_t sample_sequence,
-                                 uint64_t dropped_batches);
+size_t
+roadcast_encode_heartbeat(uint8_t out[ROADCAST_HEARTBEAT_SIZE],
+                          uint64_t sample_sequence, uint64_t change_sequence,
+                          uint64_t dropped_batches, uint64_t coalesced_samples,
+                          uint32_t effective_hz_millihz, uint8_t source_state);
 int roadcast_decode_heartbeat(const uint8_t *payload, size_t len,
                               uint64_t *sample_sequence,
-                              uint64_t *dropped_batches);
+                              uint64_t *change_sequence,
+                              uint64_t *dropped_batches,
+                              uint64_t *coalesced_samples,
+                              uint32_t *effective_hz_millihz,
+                              uint8_t *source_state);
 
 #endif

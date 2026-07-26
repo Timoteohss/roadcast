@@ -18,7 +18,9 @@ static void initialize_frames(roadcast_frame_t frames[ROADCAST_FRAME_COUNT]) {
     memset(frames, 0, sizeof(roadcast_frame_t) * ROADCAST_FRAME_COUNT);
     for (size_t i = 0; i < ROADCAST_FRAME_COUNT; i++) {
         frames[i].can_id = ROADCAST_CAN_IDS[i];
-        frames[i].present = 1;
+        frames[i].state = ROADCAST_OBSERVATION_VALID;
+        frames[i].first_observed_ns = 10;
+        frames[i].last_change_ns = 20;
     }
 }
 
@@ -62,12 +64,22 @@ static void test_decoding_and_invalid_flag(void) {
     roadcast_decode_signals(frames, values);
     assert(values[ambient].raw == 42);
     assert(values[ambient].physical == 42.0);
-    assert(values[ambient].valid == 1);
+    assert(values[ambient].state == ROADCAST_OBSERVATION_VALID);
+    assert(values[ambient].first_observed_ns == 10);
+    assert(values[ambient].last_change_ns == 20);
 
     frames[frame_index].data[0] |= 2;
     roadcast_decode_signals(frames, values);
     assert(values[ambient_invalid].raw == 1);
-    assert(values[ambient].valid == 0);
+    assert(values[ambient].state == ROADCAST_OBSERVATION_INVALID);
+
+    frames[frame_index].state = ROADCAST_OBSERVATION_NEVER_OBSERVED;
+    roadcast_decode_signals(frames, values);
+    assert(values[ambient].state == ROADCAST_OBSERVATION_NEVER_OBSERVED);
+
+    frames[frame_index].state = ROADCAST_OBSERVATION_UNAVAILABLE;
+    roadcast_decode_signals(frames, values);
+    assert(values[ambient].state == ROADCAST_OBSERVATION_UNAVAILABLE);
 }
 
 static void test_64_bit_signal(void) {

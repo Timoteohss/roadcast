@@ -55,15 +55,17 @@ void roadcast_decode_signals(
         values[i].raw = roadcast_decode_signal_raw(definition, frame->data);
         values[i].physical =
             roadcast_decode_signal_physical(definition, values[i].raw);
-        values[i].valid = frame->present;
+        values[i].state = frame->state;
         values[i].calibrated = definition->calibrated;
+        values[i].first_observed_ns = frame->first_observed_ns;
+        values[i].last_change_ns = frame->last_change_ns;
     }
 
     for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
         uint32_t invalid_index = ROADCAST_SIGNALS[i].invalid_signal_index;
-        if (invalid_index != UINT32_MAX && values[invalid_index].raw != 0) {
-            values[i].valid = 0;
-        }
+        if (values[i].state == ROADCAST_OBSERVATION_VALID &&
+            invalid_index != UINT32_MAX && values[invalid_index].raw != 0)
+            values[i].state = ROADCAST_OBSERVATION_INVALID;
     }
 }
 

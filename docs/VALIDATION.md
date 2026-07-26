@@ -90,7 +90,8 @@ temporary executables were removed from `/data/local/tmp`.
 ## Host validation
 
 `make test` validates explicit wire encoding, handshake payloads, frame batches,
-reserved fields, capacity limits, truncation, and heartbeat payloads.
+reserved fields, directional payload limits, page metadata, observation states
+and timestamps, capacity limits, truncation, and version 3 heartbeat payloads.
 
 `make integration` starts a high-load 240 Hz fake source over a temporary
 filesystem Unix socket. It verifies:
@@ -102,6 +103,9 @@ filesystem Unix socket. It verifies:
   HELLO remain isolated to their sessions;
 - two clients receive complete snapshots and continuous delta streams without
   sequence gaps while another client stops reading;
+- the 111-frame snapshot is retrieved as multiple bounded pages;
+- decoded fake-source updates are observed/valid and carry non-zero
+  first-observed and last-change timestamps;
 - a paused client overflows its bounded queue, receives `RESYNC_REQUIRED`,
   retrieves a new consistent snapshot, subscribes again, and resumes with zero
   sequence gaps after recovery.

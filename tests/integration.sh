@@ -48,7 +48,7 @@ sleep 3
 "$ROOT/build/roadcastctl" --socket "$SOCKET" --seconds 1 \
   >"$TEMP_DIR/post-timeout-client.stdout" \
   2>"$TEMP_DIR/post-timeout-client.stderr"
-grep -q '^welcome: protocol=2 ' "$TEMP_DIR/post-timeout-client.stdout"
+grep -q '^welcome: protocol=3 ' "$TEMP_DIR/post-timeout-client.stdout"
 wait "$IDLE_CLIENTS_PID"
 IDLE_CLIENTS_PID=""
 
@@ -60,7 +60,7 @@ python3 "$ROOT/tests/protocol_abuse.py" "$SOCKET" \
   2>"$TEMP_DIR/post-abuse-client.stderr"
 grep -q '^protocol abuse cases passed: 8$' \
   "$TEMP_DIR/protocol-abuse.stdout"
-grep -q '^welcome: protocol=2 ' "$TEMP_DIR/post-abuse-client.stdout"
+grep -q '^welcome: protocol=3 ' "$TEMP_DIR/post-abuse-client.stdout"
 
 "$ROOT/build/roadcastctl" --socket "$SOCKET" --seconds 2 \
   --signal VehicleSpeed \
@@ -88,7 +88,7 @@ wait "$RECOVERY_CLIENT_PID"
 RECOVERY_CLIENT_PID=""
 
 for client in client-a client-b; do
-  grep -q '^welcome: protocol=2 hz=240 frames=111 signals=815 ' \
+  grep -q '^welcome: protocol=3 hz=240 frames=111 signals=815 max_request=4064 max_response=2016 ' \
     "$TEMP_DIR/$client.stdout"
   grep -q '^schema: version=1 signals=815 ' "$TEMP_DIR/$client.stdout"
   grep -q '^snapshot: frames=111 signals=815 ' "$TEMP_DIR/$client.stdout"
@@ -103,6 +103,8 @@ grep -q '^schema-entry: .*name=ESC_VehicleSpeed ' \
   "$TEMP_DIR/client-a.stdout"
 grep -q '^signal: .*name=ESC_VehicleSpeed ' "$TEMP_DIR/client-a.stdout"
 grep -q '^update: .*name=ESC_VehicleSpeed ' "$TEMP_DIR/client-a.stdout"
+grep -q '^update: .*name=ESC_VehicleSpeed .*state=2 .*first_ns=[1-9][0-9]* changed_ns=[1-9][0-9]*$' \
+  "$TEMP_DIR/client-a.stdout"
 grep -q '^stalling: seconds=4$' "$TEMP_DIR/slow-client.stdout"
 grep -q '^pausing: seconds=4$' "$TEMP_DIR/recovery-client.stdout"
 grep -q '^summary: gaps=0 resyncs=[1-9][0-9]*$' \

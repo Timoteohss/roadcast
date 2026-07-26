@@ -93,31 +93,37 @@ int roadcast_decode_hello(const uint8_t *payload, size_t len,
 
 size_t roadcast_encode_welcome(uint8_t out[ROADCAST_WELCOME_SIZE], uint32_t hz,
                                uint32_t frame_count, uint32_t signal_count,
-                               uint32_t max_payload, uint32_t capabilities,
-                               uint32_t schema_version, uint64_t schema_hash) {
+                               uint32_t max_request_payload,
+                               uint32_t max_response_payload,
+                               uint32_t capabilities, uint32_t schema_version,
+                               uint64_t schema_hash) {
     put_u32(out, hz);
     put_u32(out + 4, frame_count);
     put_u32(out + 8, signal_count);
-    put_u32(out + 12, max_payload);
-    put_u32(out + 16, capabilities);
-    put_u32(out + 20, schema_version);
-    put_u64(out + 24, schema_hash);
+    put_u32(out + 12, max_request_payload);
+    put_u32(out + 16, max_response_payload);
+    put_u32(out + 20, capabilities);
+    put_u32(out + 24, schema_version);
+    put_u64(out + 28, schema_hash);
     return ROADCAST_WELCOME_SIZE;
 }
 
 int roadcast_decode_welcome(const uint8_t *payload, size_t len, uint32_t *hz,
                             uint32_t *frame_count, uint32_t *signal_count,
-                            uint32_t *max_payload, uint32_t *capabilities,
-                            uint32_t *schema_version, uint64_t *schema_hash) {
+                            uint32_t *max_request_payload,
+                            uint32_t *max_response_payload,
+                            uint32_t *capabilities, uint32_t *schema_version,
+                            uint64_t *schema_hash) {
     if (len != ROADCAST_WELCOME_SIZE)
         return -1;
     *hz = get_u32(payload);
     *frame_count = get_u32(payload + 4);
     *signal_count = get_u32(payload + 8);
-    *max_payload = get_u32(payload + 12);
-    *capabilities = get_u32(payload + 16);
-    *schema_version = get_u32(payload + 20);
-    *schema_hash = get_u64(payload + 24);
+    *max_request_payload = get_u32(payload + 12);
+    *max_response_payload = get_u32(payload + 16);
+    *capabilities = get_u32(payload + 20);
+    *schema_version = get_u32(payload + 24);
+    *schema_hash = get_u64(payload + 28);
     return 0;
 }
 
@@ -202,6 +208,7 @@ int roadcast_decode_schema_chunk(const uint8_t *payload, size_t len,
 
 size_t roadcast_encode_frame_batch(uint8_t *out, size_t cap,
                                    uint64_t sample_sequence,
+                                   uint32_t total_count, uint32_t start_index,
                                    const roadcast_frame_t *frames,
                                    const uint16_t *indices, size_t count) {
     if (count > UINT16_MAX)
@@ -215,29 +222,34 @@ size_t roadcast_encode_frame_batch(uint8_t *out, size_t cap,
         return 0;
 
     put_u64(out, sample_sequence);
-    put_u16(out + 8, (uint16_t)count);
-    put_u16(out + 10, 0);
+    put_u32(out + 8, total_count);
+    put_u32(out + 12, start_index);
+    put_u16(out + 16, (uint16_t)count);
+    put_u16(out + 18, 0);
     for (size_t i = 0; i < count; i++) {
         const roadcast_frame_t *frame = &frames[indices ? indices[i] : i];
         uint8_t *record =
             out + ROADCAST_BATCH_PREFIX_SIZE + i * ROADCAST_FRAME_WIRE_SIZE;
         put_u16(record, frame->can_id);
-        record[2] = frame->present ? 1u : 0u;
+        record[2] = frame->state;
         record[3] = 0;
         memcpy(record + 4, frame->data, sizeof(frame->data));
+        put_u64(record + 12, frame->first_observed_ns);
+        put_u64(record + 20, frame->last_change_ns);
     }
     return needed;
 }
 
 int roadcast_decode_frame_batch(const uint8_t *payload, size_t len,
                                 uint64_t *sample_sequence,
+                                uint32_t *total_count, uint32_t *start_index,
                                 roadcast_frame_t *frames, size_t frame_cap,
                                 size_t *frame_count) {
     if (len < ROADCAST_BATCH_PREFIX_SIZE)
         return -1;
-    if (payload[10] != 0 || payload[11] != 0)
+    if (payload[18] != 0 || payload[19] != 0)
         return -1;
-    size_t count = get_u16(payload + 8);
+    size_t count = get_u16(payload + 16);
     if (count >
         (SIZE_MAX - ROADCAST_BATCH_PREFIX_SIZE) / ROADCAST_FRAME_WIRE_SIZE)
         return -1;
@@ -247,21 +259,29 @@ int roadcast_decode_frame_batch(const uint8_t *payload, size_t len,
         return -1;
 
     *sample_sequence = get_u64(payload);
+    *total_count = get_u32(payload + 8);
+    *start_index = get_u32(payload + 12);
+    if (*start_index != UINT32_MAX &&
+        (*start_index > *total_count || count > *total_count - *start_index))
+        return -1;
     *frame_count = count;
     for (size_t i = 0; i < count; i++) {
         const uint8_t *record =
             payload + ROADCAST_BATCH_PREFIX_SIZE + i * ROADCAST_FRAME_WIRE_SIZE;
-        if (record[2] > 1 || record[3] != 0)
+        if (record[2] > ROADCAST_OBSERVATION_VALID || record[3] != 0)
             return -1;
         frames[i].can_id = get_u16(record);
-        frames[i].present = record[2];
+        frames[i].state = record[2];
         memcpy(frames[i].data, record + 4, sizeof(frames[i].data));
+        frames[i].first_observed_ns = get_u64(record + 12);
+        frames[i].last_change_ns = get_u64(record + 20);
     }
     return 0;
 }
 
 size_t roadcast_encode_signal_batch(uint8_t *out, size_t capacity,
                                     uint64_t sample_sequence,
+                                    uint32_t total_count, uint32_t start_index,
                                     const roadcast_signal_value_t *signals,
                                     const uint32_t *indices, size_t count) {
     if (count > UINT16_MAX || count > (SIZE_MAX - ROADCAST_BATCH_PREFIX_SIZE) /
@@ -273,31 +293,36 @@ size_t roadcast_encode_signal_batch(uint8_t *out, size_t capacity,
         return 0;
 
     put_u64(out, sample_sequence);
-    put_u16(out + 8, (uint16_t)count);
-    put_u16(out + 10, 0);
+    put_u32(out + 8, total_count);
+    put_u32(out + 12, start_index);
+    put_u16(out + 16, (uint16_t)count);
+    put_u16(out + 18, 0);
     for (size_t i = 0; i < count; i++) {
         uint32_t index = indices ? indices[i] : (uint32_t)i;
         const roadcast_signal_value_t *value = &signals[index];
         uint8_t *record =
             out + ROADCAST_BATCH_PREFIX_SIZE + i * ROADCAST_SIGNAL_WIRE_SIZE;
         put_u32(record, index);
-        record[4] = value->valid ? 1 : 0;
+        record[4] = value->state;
         record[5] = value->calibrated ? 1 : 0;
         put_u16(record + 6, 0);
         put_u64(record + 8, value->raw);
         put_double(record + 16, value->physical);
+        put_u64(record + 24, value->first_observed_ns);
+        put_u64(record + 32, value->last_change_ns);
     }
     return needed;
 }
 
 int roadcast_decode_signal_batch(const uint8_t *payload, size_t len,
                                  uint64_t *sample_sequence,
+                                 uint32_t *total_count, uint32_t *start_index,
                                  roadcast_signal_update_t *updates,
                                  size_t update_capacity, size_t *update_count) {
-    if (len < ROADCAST_BATCH_PREFIX_SIZE || payload[10] != 0 ||
-        payload[11] != 0)
+    if (len < ROADCAST_BATCH_PREFIX_SIZE || payload[18] != 0 ||
+        payload[19] != 0)
         return -1;
-    size_t count = get_u16(payload + 8);
+    size_t count = get_u16(payload + 16);
     if (count >
         (SIZE_MAX - ROADCAST_BATCH_PREFIX_SIZE) / ROADCAST_SIGNAL_WIRE_SIZE)
         return -1;
@@ -307,34 +332,60 @@ int roadcast_decode_signal_batch(const uint8_t *payload, size_t len,
         return -1;
 
     *sample_sequence = get_u64(payload);
+    *total_count = get_u32(payload + 8);
+    *start_index = get_u32(payload + 12);
+    if (*start_index != UINT32_MAX &&
+        (*start_index > *total_count || count > *total_count - *start_index))
+        return -1;
     *update_count = count;
     for (size_t i = 0; i < count; i++) {
         const uint8_t *record = payload + ROADCAST_BATCH_PREFIX_SIZE +
                                 i * ROADCAST_SIGNAL_WIRE_SIZE;
-        if (record[4] > 1 || record[5] > 1 || get_u16(record + 6) != 0)
+        if (record[4] > ROADCAST_OBSERVATION_INVALID || record[5] > 1 ||
+            get_u16(record + 6) != 0)
             return -1;
         updates[i].index = get_u32(record);
-        updates[i].value.valid = record[4];
+        updates[i].value.state = record[4];
         updates[i].value.calibrated = record[5];
         updates[i].value.raw = get_u64(record + 8);
         updates[i].value.physical = get_double(record + 16);
+        updates[i].value.first_observed_ns = get_u64(record + 24);
+        updates[i].value.last_change_ns = get_u64(record + 32);
     }
     return 0;
 }
 
-size_t roadcast_encode_heartbeat(uint8_t out[16], uint64_t sample_sequence,
-                                 uint64_t dropped_batches) {
+size_t
+roadcast_encode_heartbeat(uint8_t out[ROADCAST_HEARTBEAT_SIZE],
+                          uint64_t sample_sequence, uint64_t change_sequence,
+                          uint64_t dropped_batches, uint64_t coalesced_samples,
+                          uint32_t effective_hz_millihz, uint8_t source_state) {
     put_u64(out, sample_sequence);
-    put_u64(out + 8, dropped_batches);
-    return 16;
+    put_u64(out + 8, change_sequence);
+    put_u64(out + 16, dropped_batches);
+    put_u64(out + 24, coalesced_samples);
+    put_u32(out + 32, effective_hz_millihz);
+    out[36] = source_state;
+    memset(out + 37, 0, 3);
+    return ROADCAST_HEARTBEAT_SIZE;
 }
 
 int roadcast_decode_heartbeat(const uint8_t *payload, size_t len,
                               uint64_t *sample_sequence,
-                              uint64_t *dropped_batches) {
-    if (len != 16)
+                              uint64_t *change_sequence,
+                              uint64_t *dropped_batches,
+                              uint64_t *coalesced_samples,
+                              uint32_t *effective_hz_millihz,
+                              uint8_t *source_state) {
+    if (len != ROADCAST_HEARTBEAT_SIZE ||
+        payload[36] > ROADCAST_SOURCE_STATE_DEGRADED || payload[37] != 0 ||
+        payload[38] != 0 || payload[39] != 0)
         return -1;
     *sample_sequence = get_u64(payload);
-    *dropped_batches = get_u64(payload + 8);
+    *change_sequence = get_u64(payload + 8);
+    *dropped_batches = get_u64(payload + 16);
+    *coalesced_samples = get_u64(payload + 24);
+    *effective_hz_millihz = get_u32(payload + 32);
+    *source_state = payload[36];
     return 0;
 }

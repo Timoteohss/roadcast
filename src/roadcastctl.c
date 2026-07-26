@@ -206,20 +206,37 @@ static int request_frame_snapshot(int fd, roadcast_header_t *header,
                                   uint8_t *payload, size_t payload_capacity,
                                   uint64_t *sample_sequence,
                                   uint64_t *change_sequence) {
-    if (send_message(fd, ROADCAST_MSG_GET_SNAPSHOT, NULL, 0) < 0 ||
-        read_message(fd, header, payload, payload_capacity, READ_TIMEOUT_MS) <
-            0 ||
-        header->type != ROADCAST_MSG_SNAPSHOT)
-        return -1;
+    uint32_t next_index = 0;
+    while (next_index < ROADCAST_FRAME_COUNT) {
+        uint8_t request[ROADCAST_SCHEMA_REQUEST_SIZE];
+        roadcast_encode_index_request(request, next_index);
+        if (send_message(fd, ROADCAST_MSG_GET_SNAPSHOT, request,
+                         sizeof(request)) < 0 ||
+            read_message(fd, header, payload, payload_capacity,
+                         READ_TIMEOUT_MS) < 0 ||
+            header->type != ROADCAST_MSG_SNAPSHOT)
+            return -1;
 
-    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
-    size_t frame_count;
-    if (roadcast_decode_frame_batch(payload, header->payload_bytes,
-                                    sample_sequence, frames,
-                                    ROADCAST_FRAME_COUNT, &frame_count) < 0 ||
-        frame_count != ROADCAST_FRAME_COUNT)
-        return -1;
-    *change_sequence = header->sequence;
+        roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+        uint64_t page_sample_sequence;
+        uint32_t total_count;
+        uint32_t start_index;
+        size_t frame_count;
+        if (roadcast_decode_frame_batch(
+                payload, header->payload_bytes, &page_sample_sequence,
+                &total_count, &start_index, frames, ROADCAST_FRAME_COUNT,
+                &frame_count) < 0 ||
+            total_count != ROADCAST_FRAME_COUNT || start_index != next_index ||
+            frame_count == 0 ||
+            (next_index && (page_sample_sequence != *sample_sequence ||
+                            header->sequence != *change_sequence)))
+            return -1;
+        if (!next_index) {
+            *sample_sequence = page_sample_sequence;
+            *change_sequence = header->sequence;
+        }
+        next_index += (uint32_t)frame_count;
+    }
     return 0;
 }
 
@@ -228,9 +245,11 @@ static void print_signal_value(const client_catalog_t *catalog, uint32_t index,
     const roadcast_schema_entry_t *entry = &catalog->schema[index];
     const roadcast_signal_value_t *value = &catalog->signals[index];
     printf("%s: index=%u name=%s raw=0x%016" PRIx64
-           " value=%.9g unit=%s valid=%u calibrated=%u\n",
+           " value=%.9g unit=%s state=%u calibrated=%u first_ns=%" PRIu64
+           " changed_ns=%" PRIu64 "\n",
            prefix, index, entry->name, value->raw, value->physical,
-           entry->unit[0] ? entry->unit : "-", value->valid, value->calibrated);
+           entry->unit[0] ? entry->unit : "-", value->state, value->calibrated,
+           value->first_observed_ns, value->last_change_ns);
 }
 
 static int request_signal_snapshot(int fd, roadcast_header_t *header,
@@ -252,11 +271,16 @@ static int request_signal_snapshot(int fd, roadcast_header_t *header,
 
         roadcast_signal_update_t updates[SIGNAL_CHUNK_UPDATE_CAP];
         uint64_t sample_sequence;
+        uint32_t total_count;
+        uint32_t start_index;
         size_t update_count;
         if (roadcast_decode_signal_batch(
-                payload, header->payload_bytes, &sample_sequence, updates,
-                SIGNAL_CHUNK_UPDATE_CAP, &update_count) < 0 ||
-            sample_sequence != expected_sample_sequence || update_count == 0)
+                payload, header->payload_bytes, &sample_sequence, &total_count,
+                &start_index, updates, SIGNAL_CHUNK_UPDATE_CAP,
+                &update_count) < 0 ||
+            sample_sequence != expected_sample_sequence ||
+            total_count != catalog->signal_count || start_index != next_index ||
+            update_count == 0)
             return -1;
         for (size_t i = 0; i < update_count; i++) {
             if (updates[i].index != next_index + i ||
@@ -312,19 +336,29 @@ static int complete_subscription(int fd, roadcast_header_t *header,
         }
         if (header->type == ROADCAST_MSG_UPDATE_BATCH) {
             roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+            uint32_t total_count;
+            uint32_t start_index;
             size_t count;
             if (roadcast_decode_frame_batch(payload, header->payload_bytes,
-                                            sample_sequence, frames,
-                                            ROADCAST_FRAME_COUNT, &count) < 0)
+                                            sample_sequence, &total_count,
+                                            &start_index, frames,
+                                            ROADCAST_FRAME_COUNT, &count) < 0 ||
+                total_count != ROADCAST_FRAME_COUNT ||
+                start_index != UINT32_MAX)
                 return -1;
             continue;
         }
         if (header->type == ROADCAST_MSG_SIGNAL_UPDATE_BATCH) {
             roadcast_signal_update_t updates[SIGNAL_CHUNK_UPDATE_CAP];
+            uint32_t total_count;
+            uint32_t start_index;
             size_t count;
             if (roadcast_decode_signal_batch(
-                    payload, header->payload_bytes, sample_sequence, updates,
-                    SIGNAL_CHUNK_UPDATE_CAP, &count) < 0)
+                    payload, header->payload_bytes, sample_sequence,
+                    &total_count, &start_index, updates,
+                    SIGNAL_CHUNK_UPDATE_CAP, &count) < 0 ||
+                total_count != catalog->signal_count ||
+                start_index != UINT32_MAX)
                 return -1;
             for (size_t i = 0; i < count; i++) {
                 if (updates[i].index >= catalog->signal_count)
@@ -433,13 +467,15 @@ int main(int argc, char **argv) {
     uint32_t hz;
     uint32_t frame_count;
     uint32_t signal_count;
-    uint32_t max_payload;
+    uint32_t max_request_payload;
+    uint32_t max_response_payload;
     uint32_t capabilities;
     uint32_t schema_version;
     uint64_t schema_hash;
     if (roadcast_decode_welcome(
             payload, header.payload_bytes, &hz, &frame_count, &signal_count,
-            &max_payload, &capabilities, &schema_version, &schema_hash) < 0 ||
+            &max_request_payload, &max_response_payload, &capabilities,
+            &schema_version, &schema_hash) < 0 ||
         frame_count != ROADCAST_FRAME_COUNT ||
         !(capabilities & ROADCAST_CAP_RAW_CAN) ||
         !(capabilities & ROADCAST_CAP_DECODED_CAN)) {
@@ -448,10 +484,10 @@ int main(int argc, char **argv) {
         close(fd);
         return 1;
     }
-    printf("welcome: protocol=%u hz=%u frames=%u signals=%u max_payload=%u "
-           "caps=0x%x\n",
+    printf("welcome: protocol=%u hz=%u frames=%u signals=%u max_request=%u "
+           "max_response=%u caps=0x%x\n",
            ROADCAST_PROTOCOL_VERSION, hz, frame_count, signal_count,
-           max_payload, capabilities);
+           max_request_payload, max_response_payload, capabilities);
 
     client_catalog_t catalog = {
         .schema = calloc(signal_count, sizeof(*catalog.schema)),
@@ -523,11 +559,19 @@ int main(int argc, char **argv) {
 
         if (header.type == ROADCAST_MSG_UPDATE_BATCH) {
             roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+            uint32_t total_count;
+            uint32_t start_index;
             size_t count;
             if (roadcast_decode_frame_batch(payload, header.payload_bytes,
-                                            &sample_sequence, frames,
+                                            &sample_sequence, &total_count,
+                                            &start_index, frames,
                                             ROADCAST_FRAME_COUNT, &count) < 0) {
                 fprintf(stderr, "Malformed UPDATE_BATCH\n");
+                goto fail;
+            }
+            if (total_count != ROADCAST_FRAME_COUNT ||
+                start_index != UINT32_MAX) {
+                fprintf(stderr, "Invalid UPDATE_BATCH page metadata\n");
                 goto fail;
             }
             observe_change_sequence(header.sequence, &last_change_sequence,
@@ -537,11 +581,19 @@ int main(int argc, char **argv) {
             changed_frames += count;
         } else if (header.type == ROADCAST_MSG_SIGNAL_UPDATE_BATCH) {
             roadcast_signal_update_t updates[SIGNAL_CHUNK_UPDATE_CAP];
+            uint32_t total_count;
+            uint32_t start_index;
             size_t count;
             if (roadcast_decode_signal_batch(
-                    payload, header.payload_bytes, &sample_sequence, updates,
+                    payload, header.payload_bytes, &sample_sequence,
+                    &total_count, &start_index, updates,
                     SIGNAL_CHUNK_UPDATE_CAP, &count) < 0) {
                 fprintf(stderr, "Malformed SIGNAL_UPDATE_BATCH\n");
+                goto fail;
+            }
+            if (total_count != catalog.signal_count ||
+                start_index != UINT32_MAX) {
+                fprintf(stderr, "Invalid SIGNAL_UPDATE_BATCH page metadata\n");
                 goto fail;
             }
             observe_change_sequence(header.sequence, &last_change_sequence,
@@ -560,13 +612,25 @@ int main(int argc, char **argv) {
                     print_signal_value(&catalog, index, "update");
             }
         } else if (header.type == ROADCAST_MSG_HEARTBEAT) {
+            uint64_t heartbeat_change_sequence;
             uint64_t dropped_batches;
-            if (roadcast_decode_heartbeat(payload, header.payload_bytes,
-                                          &sample_sequence,
-                                          &dropped_batches) < 0) {
+            uint64_t coalesced_samples;
+            uint32_t effective_hz_millihz;
+            uint8_t source_state;
+            if (roadcast_decode_heartbeat(
+                    payload, header.payload_bytes, &sample_sequence,
+                    &heartbeat_change_sequence, &dropped_batches,
+                    &coalesced_samples, &effective_hz_millihz,
+                    &source_state) < 0) {
                 fprintf(stderr, "Malformed HEARTBEAT\n");
                 goto fail;
             }
+            if (heartbeat_change_sequence != header.sequence) {
+                fprintf(stderr, "Inconsistent HEARTBEAT sequence\n");
+                goto fail;
+            }
+            observe_change_sequence(heartbeat_change_sequence,
+                                    &last_change_sequence, &sequence_gaps);
             last_sample_sequence = sample_sequence;
         } else if (header.type == ROADCAST_MSG_RESYNC_REQUIRED) {
             if (request_complete_snapshot(

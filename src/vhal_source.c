@@ -288,7 +288,9 @@ int roadcast_vhal_read(roadcast_vhal_source_t *source,
     size_t resolved = 0;
     for (size_t i = 0; i < ROADCAST_FRAME_COUNT; i++) {
         frames[i].can_id = ROADCAST_CAN_IDS[i];
-        frames[i].present = source->addresses[i] ? 1u : 0u;
+        frames[i].state = source->addresses[i]
+                              ? ROADCAST_OBSERVATION_NEVER_OBSERVED
+                              : ROADCAST_OBSERVATION_UNAVAILABLE;
         if (!source->addresses[i]) {
             memset(frames[i].data, 0, sizeof(frames[i].data));
             continue;
@@ -312,6 +314,7 @@ int roadcast_vhal_read(roadcast_vhal_source_t *source,
         if (source->addresses[i] &&
             read_one(source, source->addresses[i], frames[i].data) < 0) {
             memset(frames[i].data, 0, sizeof(frames[i].data));
+            frames[i].state = ROADCAST_OBSERVATION_UNAVAILABLE;
             failures++;
         }
     }

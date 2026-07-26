@@ -198,6 +198,29 @@ silently discard a completed source read. A ring buffer is unnecessary while
 the product contract promises current state rather than every intermediate
 sample.
 
+## D-015: protocol version 3 exposes uncertainty and directional limits
+
+**Status:** accepted.
+
+Protocol version 3 is an intentional incompatible change. It adds:
+
+- separate maximum request and response payloads in `WELCOME`;
+- explicit `total_count`, `start_index`, and `count` batch metadata;
+- paged raw-frame snapshots;
+- unavailable, never-observed, valid, and invalid observation states;
+- first-observed and last-change monotonic timestamps;
+- effective sampling rate, source state, and handoff coalescing in heartbeats.
+
+The VHAL memory reader exposes storage, not a CAN receive event. Roadcast
+therefore treats the startup bytes as an unobserved baseline. It marks a frame
+observed only after detecting a byte transition. This may leave a genuinely
+constant frame in `never observed`, but avoids inventing source presence.
+
+Per-client output queues now contain 64 fixed 2048-byte slots. This is enough
+for the current 815-signal catch-up under the larger version 3 records while
+remaining bounded. VHAL properties must not be added until catch-up can resume
+incrementally without requiring the entire future catalog to fit those slots.
+
 ## Questoes abertas
 
 - formato binario exato e endianness;

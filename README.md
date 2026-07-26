@@ -64,8 +64,10 @@ The first executable tracer is implemented and validated. It provides:
 - a generated catalog containing 815 decoded CAN signals;
 - paged schema discovery with stable IDs and a canonical schema hash;
 - consistent decoded-signal snapshots with subscription catch-up;
+- paged raw-frame snapshots and explicit observation state/timestamps;
+- directional request/response limits and operational heartbeat metrics;
 - a reference CLI client;
-- protocol and two-client integration tests;
+- protocol, malformed-input, resynchronization, and multi-client tests;
 - Android ARM64/API 28 cross-compilation scripts.
 
 The wire protocol is still experimental and is not frozen.

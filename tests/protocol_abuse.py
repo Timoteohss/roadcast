@@ -7,7 +7,7 @@ import sys
 import time
 
 MAGIC = 0x52444354
-VERSION = 2
+VERSION = 3
 HELLO = 1
 WELCOME = 2
 GET_SNAPSHOT = 3

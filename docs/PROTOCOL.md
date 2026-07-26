@@ -30,7 +30,7 @@ Atualizar o catalogo nao implica necessariamente atualizar o protocolo.
 
 ## Sessao inicial
 
-Protocol version 2 session flow:
+Protocol version 3 session flow:
 
 ```text
 client                              roadcastd
@@ -43,8 +43,10 @@ client                              roadcastd
   ├── GET_SCHEMA start=N ─────────────►│
   │◄─ SCHEMA_CHUNK ... ────────────────┤
   │                                    │
-  ├── GET_SNAPSHOT ───────────────────►│
-  │◄─ SNAPSHOT raw frames ─────────────┤
+  ├── GET_SNAPSHOT start=0 ───────────►│
+  │◄─ SNAPSHOT start=0 count=N ────────┤
+  ├── GET_SNAPSHOT start=N ───────────►│
+  │◄─ SNAPSHOT ... ────────────────────┤
   ├── GET_SIGNAL_SNAPSHOT start=0 ────►│
   │◄─ SIGNAL_SNAPSHOT_CHUNK ───────────┤
   ├── GET_SIGNAL_SNAPSHOT ... ────────►│
@@ -60,9 +62,10 @@ client                              roadcastd
   │◄─ HEARTBEAT ───────────────────────┤
 ```
 
-Schema and decoded-signal snapshots are pulled by index. Each response remains
-within the negotiated message limit. The signal snapshot is frozen per client;
-all pages carry the same `sample_seq` and change sequence.
+Raw-frame, schema, and decoded-signal snapshots are pulled by index. Each
+response remains within the negotiated response payload limit. The frame and
+signal snapshots are frozen together per client; all pages carry the same
+`sample_seq` and change sequence.
 
 Changes that happen during snapshot transfer are not lost. `SUBSCRIBE_ALL`
 first queues the difference between the frozen snapshot and current canonical
@@ -85,7 +88,7 @@ struct roadcast_message_header {
 };
 ```
 
-Protocol version 2 encodes the 32-byte header in network byte order:
+Protocol version 3 encodes the 32-byte header in network byte order:
 
 | Offset | Size | Field |
 |---:|---:|---|
@@ -114,6 +117,29 @@ directly when compiler padding or host endianness could affect the result.
 This fixed representation is part of the public protocol and does not require
 clients to link libuv. libuv is a daemon implementation detail.
 
+`WELCOME` announces two directional limits:
+
+- `max_request_payload`: the largest payload the daemon input buffer accepts;
+- `max_response_payload`: the largest payload the daemon will emit.
+
+The current daemon announces 4064 and 2016 bytes respectively. These are
+transport limits, not permission to use arbitrary payload sizes: each command
+still has an exact payload contract.
+
+Frame and signal batches begin with this 20-byte prefix:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 8 | sample sequence |
+| 8 | 4 | total catalog count for this kind |
+| 12 | 4 | page start index, or `UINT32_MAX` for a delta batch |
+| 16 | 2 | record count |
+| 18 | 2 | reserved, zero |
+
+Snapshot pages must be contiguous and retain one sample and change sequence.
+Delta records may be split across multiple messages carrying the same change
+sequence.
+
 ## Schema
 
 Cada entrada do catalogo precisa descrever sua identidade e procedencia.
@@ -140,12 +166,12 @@ source_address       CAN id, property id/area ou equivalente
 O schema deve permitir representar informacao desconhecida sem inventar valores.
 Por exemplo, unidade ausente e diferente de unidade vazia confirmada.
 
-Protocol version 2 uses an explicitly versioned generated binary schema. Each
+Protocol version 3 uses an explicitly versioned generated binary schema. Each
 entry carries stable ID, index, invalid-signal index, CAN ID, kind, source,
 width, signed/calibrated flags, scale, offset, name, and unit.
 
 FlatBuffers remains a possible future encoding for schema and control payloads.
-It is not used by protocol version 2 and will not wrap telemetry deltas.
+It is not used by protocol version 3 and will not wrap telemetry deltas.
 
 ## IDs e indices
 
@@ -181,10 +207,27 @@ Cada valor deve distinguir:
 - fisico calculado com escala estimada;
 - fisico calculado com escala calibrada.
 
-Decoded CAN values contain a 64-bit raw value and an IEEE-754 binary64 physical
-value. `valid` requires the source frame to be present and, for the five catalog
-entries with an explicit invalid flag, that flag to be clear. `calibrated`
-describes whether scale, offset, and unit are confirmed.
+Decoded CAN values contain a 64-bit raw value, an IEEE-754 binary64 physical
+value, first-observed and last-change monotonic timestamps, an observation
+state, and a calibration flag.
+
+Protocol version 3 observation states are:
+
+| Value | Meaning |
+|---:|---|
+| 0 | source unavailable or the frame could not be read |
+| 1 | source resolved, but no transition has been observed since daemon start |
+| 2 | observed and valid |
+| 3 | observed but invalid according to an explicit catalog invalid flag |
+
+Raw frames use states 0 through 2. Signals may also use state 3. A non-zero
+memory value at daemon startup is a baseline, not proof that Roadcast observed
+the frame arrive. A frame becomes observed when its eight source bytes first
+change after that baseline. Therefore a frame that remains constant for the
+entire daemon lifetime honestly remains `never observed`.
+
+`calibrated` describes whether scale, offset, and unit are confirmed. It is
+independent from observation validity.
 
 ## Atualizacoes
 
@@ -208,13 +251,16 @@ condicao para expor o catalogo completo.
 
 ## Heartbeat
 
-Heartbeats exist even when no signal changes. In protocol version 2 their
-16-byte payload contains only the latest `sample_seq` and the number of batches
-dropped for that client. The header carries the latest `change_seq` and the
-monotonic timestamp of the latest sample.
+Heartbeats exist even when no signal changes. Protocol version 3 carries:
 
-Effective sampling frequency and VHAL source state are required additions for
-the next protocol version; version 2 does not expose them.
+- latest sample sequence;
+- latest change sequence, equal to the header sequence;
+- batches dropped for this client;
+- sampler observations coalesced by the event-loop handoff;
+- effective recent sampling frequency in milliHertz;
+- source state: unavailable, available, or degraded fallback.
+
+The header timestamp is the monotonic timestamp of the latest source sample.
 
 Assim, valor parado nao e confundido com daemon morto.
 
