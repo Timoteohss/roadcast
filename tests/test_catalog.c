@@ -84,6 +84,20 @@ static void test_64_bit_signal(void) {
     assert(values[diagnostic].raw == UINT64_C(0x0102030405060708));
 }
 
+static void test_signed_63_bit_conversion(void) {
+    roadcast_signal_definition_t definition = {
+        .width = 63,
+        .is_signed = 1,
+        .scale = 1.0,
+        .offset = 0.0,
+    };
+    assert(roadcast_decode_signal_physical(&definition,
+                                           UINT64_C(0x4000000000000000)) ==
+           -4611686018427387904.0);
+    assert(roadcast_decode_signal_physical(
+               &definition, UINT64_C(0x7fffffffffffffff)) == -1.0);
+}
+
 static void test_schema_round_trip(void) {
     uint8_t payload[2048];
     uint32_t encoded_count;
@@ -114,6 +128,7 @@ int main(void) {
     test_catalog_identity();
     test_decoding_and_invalid_flag();
     test_64_bit_signal();
+    test_signed_63_bit_conversion();
     test_schema_round_trip();
     puts("catalog tests passed");
     return 0;

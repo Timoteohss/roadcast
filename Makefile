@@ -46,11 +46,14 @@ $(BUILD_DIR)/test_catalog: tests/test_catalog.c $(COMMON_SOURCES) $(CATALOG_SOUR
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
 		tests/test_catalog.c $(COMMON_SOURCES) $(CATALOG_SOURCES)
 
+$(BUILD_DIR)/idle_clients: tests/idle_clients.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/idle_clients.c
+
 test: $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_catalog
 	$(BUILD_DIR)/test_protocol
 	$(BUILD_DIR)/test_catalog
 
-integration: all
+integration: all $(BUILD_DIR)/idle_clients
 	tests/integration.sh
 
 android:

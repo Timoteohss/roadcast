@@ -78,12 +78,24 @@ struct roadcast_message_header {
     uint32_t magic;
     uint16_t protocol_version;
     uint16_t message_type;
-    uint32_t payload_bytes;
     uint32_t flags;
+    uint32_t payload_bytes;
     uint64_t sequence;
     uint64_t timestamp_ns;
 };
 ```
+
+Protocol version 2 encodes the 32-byte header in network byte order:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 4 | magic |
+| 4 | 2 | protocol version |
+| 6 | 2 | message type |
+| 8 | 4 | flags |
+| 12 | 4 | payload bytes |
+| 16 | 8 | change sequence |
+| 24 | 8 | monotonic sample timestamp in nanoseconds |
 
 Requisitos:
 
@@ -196,13 +208,13 @@ condicao para expor o catalogo completo.
 
 ## Heartbeat
 
-Heartbeats existem mesmo quando nenhum sinal muda. Eles carregam pelo menos:
+Heartbeats exist even when no signal changes. In protocol version 2 their
+16-byte payload contains only the latest `sample_seq` and the number of batches
+dropped for that client. The header carries the latest `change_seq` and the
+monotonic timestamp of the latest sample.
 
-- ultimo `sample_seq`;
-- ultimo `change_seq`;
-- timestamp do ultimo ciclo;
-- frequencia efetiva recente;
-- estado da fonte VHAL.
+Effective sampling frequency and VHAL source state are required additions for
+the next protocol version; version 2 does not expose them.
 
 Assim, valor parado nao e confundido com daemon morto.
 

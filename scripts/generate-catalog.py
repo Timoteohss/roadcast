@@ -2,6 +2,7 @@
 """Generate the compiled Roadcast CAN catalog from data/dbc.json."""
 
 import json
+import math
 import pathlib
 import struct
 
@@ -70,6 +71,50 @@ def main():
     document = json.loads(INPUT.read_text())
     frames = document["frames"]
     signals = document["signals"]
+    if len(frames) != len(set(frames)):
+        raise ValueError("duplicate CAN frame ID")
+    if frames != sorted(frames):
+        raise ValueError("CAN frame IDs must be sorted")
+    for can_id in frames:
+        if len(can_id) != 3 or int(can_id, 16) > 0x7FF:
+            raise ValueError(f"invalid standard CAN frame ID: {can_id}")
+
+    identities = {
+        (signal["canid"], signal["name"]) for signal in signals
+    }
+    if len(identities) != len(signals):
+        raise ValueError("duplicate signal identity")
+    for signal in signals:
+        identity = (signal["canid"], signal["name"])
+        if signal["canid"] not in frames:
+            raise ValueError(f"unknown frame for signal: {identity}")
+        if not signal["name"] or len(signal["name"].encode("utf-8")) > 63:
+            raise ValueError(f"invalid signal name length: {identity}")
+        if len(signal["unit"].encode("utf-8")) > 15:
+            raise ValueError(f"invalid signal unit length: {identity}")
+        if not 1 <= signal["width"] <= 64:
+            raise ValueError(f"invalid signal width: {identity}")
+        if not signal["parts"]:
+            raise ValueError(f"signal has no parts: {identity}")
+        if sum(part["bits"] for part in signal["parts"]) != signal["width"]:
+            raise ValueError(f"parts do not match signal width: {identity}")
+        for part in signal["parts"]:
+            if part["word"] not in (0, 4):
+                raise ValueError(f"invalid part word: {identity}")
+            if not 1 <= part["bits"] <= 32:
+                raise ValueError(f"invalid part width: {identity}")
+            if not 0 <= part["off"] < 32:
+                raise ValueError(f"invalid part offset: {identity}")
+            if part["off"] + part["bits"] > 32:
+                raise ValueError(f"part exceeds 32-bit word: {identity}")
+        if not math.isfinite(float(signal["scale"])) or not math.isfinite(
+            float(signal["offset"])
+        ):
+            raise ValueError(f"non-finite conversion: {identity}")
+        invalid_flag = signal.get("invalid_flag")
+        if invalid_flag and (signal["canid"], invalid_flag) not in identities:
+            raise ValueError(f"unknown invalid flag: {identity}")
+
     frame_indices = {can_id: index for index, can_id in enumerate(frames)}
     signal_indices = {
         (signal["canid"], signal["name"]): index

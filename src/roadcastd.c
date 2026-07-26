@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
@@ -26,6 +27,7 @@
 #define DEFAULT_PROCESS "vehicle@2.0-service"
 #define DEFAULT_HZ 60
 #define MAX_CLIENTS 16
+#define MAX_CLIENTS_PER_UID 8
 #define CLIENT_INPUT_CAP 4096
 #define CLIENT_QUEUE_SLOTS 16
 #define CLIENT_MESSAGE_CAP 2048
@@ -33,6 +35,8 @@
 #define CLIENT_SOCKET_SEND_BUFFER 16384
 #define HEARTBEAT_INTERVAL_MS 1000
 #define STATS_INTERVAL_MS 10000
+#define HELLO_TIMEOUT_NS 2000000000ull
+#define SETUP_TIMEOUT_NS 10000000000ull
 #define SIGNALS_PER_MESSAGE                                                    \
     ((CLIENT_MESSAGE_CAP - ROADCAST_HEADER_SIZE -                              \
       ROADCAST_BATCH_PREFIX_SIZE) /                                            \
@@ -54,6 +58,7 @@ typedef struct {
     pthread_mutex_t published_lock;
     atomic_bool stop_requested;
     atomic_uint_fast64_t source_errors;
+    atomic_uint_fast64_t fallback_batches;
     uv_async_t *notification;
     roadcast_vhal_source_t vhal;
     roadcast_frame_t working[ROADCAST_FRAME_COUNT];
@@ -79,6 +84,10 @@ struct roadcast_client {
     output_slot_t output[CLIENT_QUEUE_SLOTS];
     size_t pending_bytes;
     uint64_t dropped_batches;
+    uint64_t hello_deadline_ns;
+    uint64_t setup_deadline_ns;
+    uid_t peer_uid;
+    pid_t peer_pid;
     roadcast_frame_t snapshot_frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t snapshot_signals[ROADCAST_SIGNAL_COUNT];
     uint64_t snapshot_sample_sequence;
@@ -91,8 +100,13 @@ struct roadcast_client {
 typedef struct {
     uint64_t ticks;
     uint64_t changed_frames;
+    uint64_t coalesced_samples;
     uint64_t queue_drops;
     uint64_t source_errors_at_start;
+    uint64_t fallback_batches_at_start;
+    uint64_t hello_timeouts;
+    uint64_t setup_timeouts;
+    uint64_t peer_limit_rejections;
 } stats_t;
 
 struct roadcast_server {
@@ -245,8 +259,7 @@ static void update_fake_frames(roadcast_frame_t frames[ROADCAST_FRAME_COUNT],
 
 static void sampler_publish(sampler_t *sampler, uint64_t sequence,
                             uint64_t timestamp_ns) {
-    if (pthread_mutex_trylock(&sampler->published_lock) != 0)
-        return;
+    pthread_mutex_lock(&sampler->published_lock);
     memcpy(sampler->published, sampler->working, sizeof(sampler->published));
     sampler->published_sequence = sequence;
     sampler->published_timestamp_ns = timestamp_ns;
@@ -270,9 +283,15 @@ static void *sampler_thread_main(void *argument) {
         sequence++;
         if (sampler->fake) {
             update_fake_frames(sampler->working, sequence);
-        } else if (roadcast_vhal_read(&sampler->vhal, sampler->working) < 0) {
-            atomic_fetch_add_explicit(&sampler->source_errors, 1,
-                                      memory_order_relaxed);
+        } else {
+            int read_result =
+                roadcast_vhal_read(&sampler->vhal, sampler->working);
+            if (read_result < 0)
+                atomic_fetch_add_explicit(&sampler->source_errors, 1,
+                                          memory_order_relaxed);
+            else if (read_result > 0)
+                atomic_fetch_add_explicit(&sampler->fallback_batches, 1,
+                                          memory_order_relaxed);
         }
         sampler_publish(sampler, sequence, monotonic_ns());
 
@@ -291,6 +310,7 @@ static int sampler_init(sampler_t *sampler, uv_async_t *notification,
     sampler->fake = fake;
     atomic_init(&sampler->stop_requested, false);
     atomic_init(&sampler->source_errors, 0);
+    atomic_init(&sampler->fallback_batches, 0);
     int error = pthread_mutex_init(&sampler->published_lock, NULL);
     if (error != 0) {
         errno = error;
@@ -304,8 +324,12 @@ static int sampler_init(sampler_t *sampler, uv_async_t *notification,
             pthread_mutex_destroy(&sampler->published_lock);
             return -1;
         }
-        if (roadcast_vhal_read(&sampler->vhal, sampler->working) < 0)
+        int read_result = roadcast_vhal_read(&sampler->vhal, sampler->working);
+        if (read_result < 0)
             atomic_fetch_add_explicit(&sampler->source_errors, 1,
+                                      memory_order_relaxed);
+        else if (read_result > 0)
+            atomic_fetch_add_explicit(&sampler->fallback_batches, 1,
                                       memory_order_relaxed);
     }
 
@@ -421,6 +445,7 @@ static int client_queue_message(roadcast_client_t *client, uint16_t type,
         client->server->stats.queue_drops++;
         client->needs_resync = 1;
         client->subscribed = 0;
+        client->setup_deadline_ns = monotonic_ns() + SETUP_TIMEOUT_NS;
         return 0;
     }
 
@@ -465,6 +490,7 @@ static int queue_snapshot(roadcast_client_t *client) {
     client->snapshot_next_index = 0;
     client->snapshot_active = 1;
     client->snapshot_complete = 0;
+    client->setup_deadline_ns = monotonic_ns() + SETUP_TIMEOUT_NS;
     uint8_t payload[ROADCAST_BATCH_PREFIX_SIZE +
                     ROADCAST_FRAME_COUNT * ROADCAST_FRAME_WIRE_SIZE];
     size_t length = roadcast_encode_frame_batch(
@@ -530,9 +556,12 @@ static int queue_subscription_catchup(roadcast_client_t *client) {
     }
 
     client->subscribed = 1;
-    return client_queue_message(client, ROADCAST_MSG_SUBSCRIBED,
-                                server->change_sequence,
-                                server->sample_timestamp_ns, NULL, 0, 0);
+    int result = client_queue_message(client, ROADCAST_MSG_SUBSCRIBED,
+                                      server->change_sequence,
+                                      server->sample_timestamp_ns, NULL, 0, 0);
+    if (result == 0)
+        client->setup_deadline_ns = 0;
+    return result;
 }
 
 static int queue_schema_chunk(roadcast_client_t *client, uint32_t start_index) {
@@ -611,6 +640,8 @@ static int process_command(roadcast_client_t *client,
                 server->sample_timestamp_ns, welcome, length, 0) < 0)
             return -1;
         client->greeted = 1;
+        client->hello_deadline_ns = 0;
+        client->setup_deadline_ns = monotonic_ns() + SETUP_TIMEOUT_NS;
         return 0;
     }
     case ROADCAST_MSG_GET_SNAPSHOT:
@@ -741,6 +772,44 @@ static void reject_connection(uv_stream_t *listener) {
     uv_close((uv_handle_t *)&rejected->stream, on_rejected_client_closed);
 }
 
+static int read_peer_credentials(uv_pipe_t *stream, uid_t *uid, pid_t *pid) {
+    uv_os_fd_t descriptor;
+    if (uv_fileno((uv_handle_t *)stream, &descriptor) < 0)
+        return -1;
+#if defined(__linux__) || defined(__ANDROID__)
+    struct ucred credentials;
+    socklen_t length = sizeof(credentials);
+    if (getsockopt((int)descriptor, SOL_SOCKET, SO_PEERCRED, &credentials,
+                   &length) < 0 ||
+        length != sizeof(credentials))
+        return -1;
+    *uid = credentials.uid;
+    *pid = credentials.pid;
+    return 0;
+#elif defined(__APPLE__)
+    gid_t gid;
+    if (getpeereid((int)descriptor, uid, &gid) < 0)
+        return -1;
+    *pid = 0;
+    return 0;
+#else
+    (void)uid;
+    (void)pid;
+    errno = ENOTSUP;
+    return -1;
+#endif
+}
+
+static size_t active_clients_for_uid(const roadcast_server_t *server,
+                                     uid_t uid) {
+    size_t count = 0;
+    for (size_t i = 0; i < MAX_CLIENTS; i++) {
+        if (server->clients[i].active && server->clients[i].peer_uid == uid)
+            count++;
+    }
+    return count;
+}
+
 static void on_connection(uv_stream_t *listener, int status) {
     roadcast_server_t *server = listener->data;
     if (status < 0 || server->shutting_down)
@@ -762,6 +831,20 @@ static void on_connection(uv_stream_t *listener, int status) {
         client->closing = 1;
         return;
     }
+    uid_t peer_uid;
+    pid_t peer_pid;
+    if (read_peer_credentials(&client->stream, &peer_uid, &peer_pid) < 0 ||
+        active_clients_for_uid(server, peer_uid) >= MAX_CLIENTS_PER_UID) {
+        server->stats.peer_limit_rejections++;
+        client->active = 1;
+        client_close(client);
+        return;
+    }
+    client->peer_uid = peer_uid;
+    client->peer_pid = peer_pid;
+    uint64_t now = monotonic_ns();
+    client->hello_deadline_ns = now + HELLO_TIMEOUT_NS;
+    client->setup_deadline_ns = now + SETUP_TIMEOUT_NS;
     client->active = 1;
     uv_os_fd_t client_fd;
     if (uv_fileno((uv_handle_t *)&client->stream, &client_fd) == 0) {
@@ -815,6 +898,7 @@ static void distribute_latest_sample(roadcast_server_t *server) {
     server->sample_sequence = sequence;
     server->sample_timestamp_ns = timestamp_ns;
     server->stats.ticks += elapsed_ticks;
+    server->stats.coalesced_samples += elapsed_ticks - 1;
     server->stats.changed_frames += changed_count;
     if (!changed_count && !changed_signal_count)
         return;
@@ -871,8 +955,21 @@ static void on_sample_notification(uv_async_t *handle) {
 
 static void on_heartbeat(uv_timer_t *timer) {
     roadcast_server_t *server = timer->data;
+    uint64_t now = monotonic_ns();
     for (size_t i = 0; i < MAX_CLIENTS; i++) {
         roadcast_client_t *client = &server->clients[i];
+        if (client->active && !client->greeted &&
+            now >= client->hello_deadline_ns) {
+            server->stats.hello_timeouts++;
+            client_close(client);
+            continue;
+        }
+        if (client->active && client->greeted && !client->subscribed &&
+            client->setup_deadline_ns && now >= client->setup_deadline_ns) {
+            server->stats.setup_timeouts++;
+            client_close(client);
+            continue;
+        }
         if (!client->active || !client->greeted || client->needs_resync)
             continue;
         uint8_t payload[16];
@@ -889,9 +986,13 @@ static void on_stats(uv_timer_t *timer) {
     roadcast_server_t *server = timer->data;
     uint64_t source_errors = atomic_load_explicit(
         &server->sampler.source_errors, memory_order_relaxed);
+    uint64_t fallback_batches = atomic_load_explicit(
+        &server->sampler.fallback_batches, memory_order_relaxed);
     fprintf(stderr,
             "roadcastd: %.2f Hz, clients=%zu, changes/tick=%.2f, "
-            "source_errors=%llu, queue_drops=%llu\n",
+            "source_errors=%llu, fallback_batches=%llu, coalesced=%llu, "
+            "queue_drops=%llu, hello_timeouts=%llu, "
+            "setup_timeouts=%llu, peer_rejections=%llu\n",
             server->stats.ticks / (STATS_INTERVAL_MS / 1000.0),
             active_client_count(server),
             server->stats.ticks
@@ -899,9 +1000,16 @@ static void on_stats(uv_timer_t *timer) {
                 : 0.0,
             (unsigned long long)(source_errors -
                                  server->stats.source_errors_at_start),
-            (unsigned long long)server->stats.queue_drops);
+            (unsigned long long)(fallback_batches -
+                                 server->stats.fallback_batches_at_start),
+            (unsigned long long)server->stats.coalesced_samples,
+            (unsigned long long)server->stats.queue_drops,
+            (unsigned long long)server->stats.hello_timeouts,
+            (unsigned long long)server->stats.setup_timeouts,
+            (unsigned long long)server->stats.peer_limit_rejections);
     memset(&server->stats, 0, sizeof(server->stats));
     server->stats.source_errors_at_start = source_errors;
+    server->stats.fallback_batches_at_start = fallback_batches;
 }
 
 static void close_handle(uv_handle_t *handle) {
@@ -1076,6 +1184,8 @@ int main(int argc, char **argv) {
     roadcast_decode_signals(server.frames, server.signals);
     server.stats.source_errors_at_start = atomic_load_explicit(
         &server.sampler.source_errors, memory_order_relaxed);
+    server.stats.fallback_batches_at_start = atomic_load_explicit(
+        &server.sampler.fallback_batches, memory_order_relaxed);
 
     int uv_result = initialize_libuv(&server, socket_name);
     if (uv_result < 0) {

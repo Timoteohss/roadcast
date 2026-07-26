@@ -214,30 +214,24 @@ done:
     return result;
 }
 
-static int read_one(pid_t pid, uint64_t address, uint8_t data[8]) {
-#if defined(__linux__) || defined(__ANDROID__)
-    struct iovec local = {.iov_base = data, .iov_len = 8};
-    struct iovec remote = {
-        .iov_base = (void *)(uintptr_t)address,
-        .iov_len = 8,
-    };
-    if (process_vm_readv(pid, &local, 1, &remote, 1, 0) == 8)
-        return 0;
-#endif
-
+static int open_memory_fd(pid_t pid) {
     char path[64];
     snprintf(path, sizeof(path), "/proc/%d/mem", pid);
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0)
+    return open(path, O_RDONLY | O_CLOEXEC);
+}
+
+static int read_one(const roadcast_vhal_source_t *source, uint64_t address,
+                    uint8_t data[8]) {
+    if (source->mem_fd < 0)
         return -1;
-    ssize_t count = pread(fd, data, 8, (off_t)address);
-    close(fd);
+    ssize_t count = pread(source->mem_fd, data, 8, (off_t)address);
     return count == 8 ? 0 : -1;
 }
 
 int roadcast_vhal_open(roadcast_vhal_source_t *source,
                        const char *process_name) {
     memset(source, 0, sizeof(*source));
+    source->mem_fd = -1;
     source->pid = find_pid(process_name);
     if (source->pid < 0) {
         errno = ESRCH;
@@ -285,6 +279,7 @@ int roadcast_vhal_open(roadcast_vhal_source_t *source,
         errno = ENOENT;
         return -1;
     }
+    source->mem_fd = open_memory_fd(source->pid);
     return 0;
 }
 
@@ -310,19 +305,24 @@ int roadcast_vhal_read(roadcast_vhal_source_t *source,
         return 0;
 #endif
 
+    if (source->mem_fd < 0)
+        source->mem_fd = open_memory_fd(source->pid);
     int failures = 0;
     for (size_t i = 0; i < ROADCAST_FRAME_COUNT; i++) {
         if (source->addresses[i] &&
-            read_one(source->pid, source->addresses[i], frames[i].data) < 0) {
+            read_one(source, source->addresses[i], frames[i].data) < 0) {
             memset(frames[i].data, 0, sizeof(frames[i].data));
             failures++;
         }
     }
-    return failures ? -1 : 0;
+    return failures ? -1 : 1;
 }
 
 void roadcast_vhal_close(roadcast_vhal_source_t *source) {
+    if (source->mem_fd >= 0)
+        close(source->mem_fd);
     free(source->local_iov);
     free(source->remote_iov);
     memset(source, 0, sizeof(*source));
+    source->mem_fd = -1;
 }

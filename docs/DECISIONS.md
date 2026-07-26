@@ -163,11 +163,46 @@ decoded signal delta batches. FlatBuffers remains deferred: the current
 generated fixed format meets the C, Dart, and Kotlin compatibility boundary
 without a runtime serialization dependency.
 
+## D-013: bounded local session setup
+
+**Status:** accepted.
+
+The operating system remains the authority for whether a process may connect to
+the Roadcast socket. The daemon reads immutable peer credentials from the
+accepted socket and uses the peer UID for resource accounting. A UID may hold at
+most eight concurrent sessions.
+
+An accepted client has two seconds to send a valid `HELLO` and ten seconds after
+`WELCOME` to complete snapshot setup and subscribe. A client that needs
+resynchronization has the same bounded setup window. Fully subscribed clients
+have no inbound idle timeout because a read-only consumer is not required to
+send periodic traffic.
+
+Peer credentials and quotas are availability controls, not a complete
+authorization mechanism. The production UID allowlist, if one is required,
+must be decided after validating the actual app and daemon execution domains on
+an enforcing vehicle.
+
+## D-014: latest-snapshot sampler handoff
+
+**Status:** accepted.
+
+The sampler publishes one latest frame snapshot through a short mutex-protected
+copy, then notifies the libuv loop. It never waits for client queues or socket
+I/O. The event loop may coalesce multiple notifications and consume only the
+newest snapshot; sequence deltas preserve the number of elapsed samples and the
+daemon reports intermediate coalesced samples.
+
+Publishing does not use `pthread_mutex_trylock`: lock contention must not
+silently discard a completed source read. A ring buffer is unnecessary while
+the product contract promises current state rather than every intermediate
+sample.
+
 ## Questoes abertas
 
 - formato binario exato e endianness;
 - limites de fila e politica de descarte;
-- autenticacao/autorizacao de clientes locais;
+- production authorization policy beyond peer-credential resource accounting;
 - conditions that would justify replacing schema pages with FlatBuffers;
 - API do SDK C;
 - estrategia de teste sem depender do carro;

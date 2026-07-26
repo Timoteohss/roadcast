@@ -37,6 +37,12 @@ typedef struct {
 void roadcast_decode_signals(
     const roadcast_frame_t frames[ROADCAST_FRAME_COUNT],
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT]);
+uint64_t
+roadcast_decode_signal_raw(const roadcast_signal_definition_t *definition,
+                           const uint8_t frame[8]);
+double
+roadcast_decode_signal_physical(const roadcast_signal_definition_t *definition,
+                                uint64_t raw);
 
 size_t roadcast_encode_schema_chunk(uint8_t *out, size_t capacity,
                                     uint32_t start_index,

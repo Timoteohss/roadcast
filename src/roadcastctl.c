@@ -350,7 +350,8 @@ static int parse_positive_int(const char *value, int min, int max,
 static void usage(const char *program) {
     fprintf(stderr,
             "Usage: %s [--socket @name|path] [--seconds 1..3600] "
-            "[--signal substring] [--stall-after-subscribe 1..3600]\n",
+            "[--signal substring] [--stall-after-subscribe 1..3600] "
+            "[--pause-after-subscribe 1..3600]\n",
             program);
 }
 
@@ -368,6 +369,7 @@ int main(int argc, char **argv) {
     const char *signal_filter = NULL;
     int seconds = DEFAULT_SECONDS;
     int stall_seconds = 0;
+    int pause_seconds = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--socket") && i + 1 < argc) {
             socket_name = argv[++i];
@@ -384,6 +386,12 @@ int main(int argc, char **argv) {
                 usage(argv[0]);
                 return 2;
             }
+        } else if (!strcmp(argv[i], "--pause-after-subscribe") &&
+                   i + 1 < argc) {
+            if (parse_positive_int(argv[++i], 1, 3600, &pause_seconds) < 0) {
+                usage(argv[0]);
+                return 2;
+            }
         } else if (!strcmp(argv[i], "--help")) {
             usage(argv[0]);
             return 0;
@@ -391,6 +399,10 @@ int main(int argc, char **argv) {
             usage(argv[0]);
             return 2;
         }
+    }
+    if (stall_seconds && pause_seconds) {
+        usage(argv[0]);
+        return 2;
     }
 
     int fd = connect_socket(socket_name);
@@ -486,6 +498,10 @@ int main(int argc, char **argv) {
         free(payload);
         close(fd);
         return 0;
+    }
+    if (pause_seconds) {
+        printf("pausing: seconds=%d\n", pause_seconds);
+        sleep((unsigned int)pause_seconds);
     }
 
     uint64_t started = monotonic_ns();
@@ -587,6 +603,8 @@ int main(int argc, char **argv) {
         }
     }
 
+    printf("summary: gaps=%" PRIu64 " resyncs=%" PRIu64 "\n", sequence_gaps,
+           resyncs);
     free(catalog.schema);
     free(catalog.signals);
     free(catalog.matches);

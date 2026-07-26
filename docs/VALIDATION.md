@@ -93,11 +93,31 @@ temporary executables were removed from `/data/local/tmp`.
 reserved fields, capacity limits, truncation, and heartbeat payloads.
 
 `make integration` starts a high-load 240 Hz fake source over a temporary
-filesystem Unix socket. It verifies that two clients receive complete snapshots
-and continuous delta streams without sequence gaps while a third client stops
-reading after subscription. The slow client reaches its bounded queue and is
-marked for resynchronization without interrupting the other clients. The
-temporary directory and socket are removed after the test.
+filesystem Unix socket. It verifies:
+
+- sixteen idle pre-HELLO connections cannot deny service after the two-second
+  handshake deadline;
+- malformed headers, oversized payload declarations, reserved flags, commands
+  out of order, duplicate HELLO messages, random bytes, and a byte-fragmented
+  HELLO remain isolated to their sessions;
+- two clients receive complete snapshots and continuous delta streams without
+  sequence gaps while another client stops reading;
+- a paused client overflows its bounded queue, receives `RESYNC_REQUIRED`,
+  retrieves a new consistent snapshot, subscribes again, and resumes with zero
+  sequence gaps after recovery.
+
+Accepted connections are identified with `SO_PEERCRED` on Android/Linux or
+`getpeereid()` on macOS. A single UID may hold at most eight sessions. Sessions
+that do not complete HELLO in two seconds or do not reach a subscribed state in
+ten seconds are closed. These controls bound unauthenticated setup work; they
+are not an authorization policy.
+
+The temporary directory and socket are removed after the test.
+
+The sampler-to-event-loop handoff no longer drops an observation when its
+snapshot mutex is contended. libuv notifications may still coalesce, so the
+daemon reports the number of intermediate samples represented by a newer
+published snapshot as `coalesced`.
 
 The same suite passes with UndefinedBehaviorSanitizer enabled. AddressSanitizer
 could not be evaluated on the current macOS 26.5 host because the Clang ASan

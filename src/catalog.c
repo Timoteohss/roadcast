@@ -11,15 +11,14 @@ static uint32_t read_le32(const uint8_t *input) {
 static uint32_t extract_part(const uint8_t frame[8],
                              const roadcast_signal_part_t *part) {
     uint32_t word = read_le32(frame + part->word);
-    int shift = 32 - part->offset - part->bits;
-    if (shift < 0)
-        shift = 0;
+    unsigned int shift = 32u - part->offset - part->bits;
     uint32_t mask =
         part->bits >= 32 ? UINT32_MAX : (UINT32_C(1) << part->bits) - 1;
     return (word >> shift) & mask;
 }
 
-static uint64_t decode_raw(const roadcast_signal_definition_t *definition,
+uint64_t
+roadcast_decode_signal_raw(const roadcast_signal_definition_t *definition,
                            const uint8_t frame[8]) {
     uint64_t value = 0;
     for (uint8_t i = 0; i < definition->part_count; i++) {
@@ -29,8 +28,9 @@ static uint64_t decode_raw(const roadcast_signal_definition_t *definition,
     return value;
 }
 
-static double decode_physical(const roadcast_signal_definition_t *definition,
-                              uint64_t raw) {
+double
+roadcast_decode_signal_physical(const roadcast_signal_definition_t *definition,
+                                uint64_t raw) {
     double numeric = (double)raw;
     if (definition->is_signed && definition->width > 0) {
         uint64_t sign = UINT64_C(1) << (definition->width - 1);
@@ -38,8 +38,8 @@ static double decode_physical(const roadcast_signal_definition_t *definition,
             if (definition->width == 64) {
                 numeric = -((double)(UINT64_MAX - raw) + 1.0);
             } else {
-                numeric =
-                    (double)((int64_t)raw - (INT64_C(1) << definition->width));
+                uint64_t modulus = UINT64_C(1) << definition->width;
+                numeric = -(double)(modulus - raw);
             }
         }
     }
@@ -52,8 +52,9 @@ void roadcast_decode_signals(
     for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
         const roadcast_signal_definition_t *definition = &ROADCAST_SIGNALS[i];
         const roadcast_frame_t *frame = &frames[definition->frame_index];
-        values[i].raw = decode_raw(definition, frame->data);
-        values[i].physical = decode_physical(definition, values[i].raw);
+        values[i].raw = roadcast_decode_signal_raw(definition, frame->data);
+        values[i].physical =
+            roadcast_decode_signal_physical(definition, values[i].raw);
         values[i].valid = frame->present;
         values[i].calibrated = definition->calibrated;
     }
