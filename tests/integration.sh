@@ -12,6 +12,7 @@ SLOW_CLIENT_PID=""
 RECOVERY_CLIENT_PID=""
 
 cleanup() {
+  status=$?
   for pid in "$IDLE_CLIENTS_PID" "$CLIENT_A_PID" "$CLIENT_B_PID" \
     "$SLOW_CLIENT_PID" "$RECOVERY_CLIENT_PID" "$DAEMON_PID"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
@@ -19,7 +20,16 @@ cleanup() {
       wait "$pid" || true
     fi
   done
+  if [ "$status" -ne 0 ]; then
+    for log in "$TEMP_DIR"/*.stdout "$TEMP_DIR"/*.stderr; do
+      if [ -f "$log" ]; then
+        printf '\n--- %s ---\n' "$(basename "$log")" >&2
+        tail -n 80 "$log" >&2
+      fi
+    done
+  fi
   rm -rf "$TEMP_DIR"
+  return "$status"
 }
 trap cleanup EXIT INT TERM
 

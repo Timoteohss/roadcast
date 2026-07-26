@@ -385,7 +385,8 @@ static void usage(const char *program) {
     fprintf(stderr,
             "Usage: %s [--socket @name|path] [--seconds 1..3600] "
             "[--signal substring] [--stall-after-subscribe 1..3600] "
-            "[--pause-after-subscribe 1..3600]\n",
+            "[--pause-after-subscribe 1..3600] "
+            "[--delay-before-subscribe 1..3600]\n",
             program);
 }
 
@@ -404,6 +405,7 @@ int main(int argc, char **argv) {
     int seconds = DEFAULT_SECONDS;
     int stall_seconds = 0;
     int pause_seconds = 0;
+    int subscribe_delay_seconds = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--socket") && i + 1 < argc) {
             socket_name = argv[++i];
@@ -423,6 +425,13 @@ int main(int argc, char **argv) {
         } else if (!strcmp(argv[i], "--pause-after-subscribe") &&
                    i + 1 < argc) {
             if (parse_positive_int(argv[++i], 1, 3600, &pause_seconds) < 0) {
+                usage(argv[0]);
+                return 2;
+            }
+        } else if (!strcmp(argv[i], "--delay-before-subscribe") &&
+                   i + 1 < argc) {
+            if (parse_positive_int(argv[++i], 1, 3600,
+                                   &subscribe_delay_seconds) < 0) {
                 usage(argv[0]);
                 return 2;
             }
@@ -512,8 +521,18 @@ int main(int argc, char **argv) {
     uint64_t change_sequence;
     if (request_complete_snapshot(fd, &header, payload, ROADCAST_MAX_PAYLOAD,
                                   &catalog, &sample_sequence,
-                                  &change_sequence) < 0 ||
-        complete_subscription(fd, &header, payload, ROADCAST_MAX_PAYLOAD,
+                                  &change_sequence) < 0) {
+        fprintf(stderr, "Snapshot or subscription failed\n");
+        free(catalog.schema);
+        free(catalog.signals);
+        free(catalog.matches);
+        free(payload);
+        close(fd);
+        return 1;
+    }
+    if (subscribe_delay_seconds)
+        sleep((unsigned int)subscribe_delay_seconds);
+    if (complete_subscription(fd, &header, payload, ROADCAST_MAX_PAYLOAD,
                               &catalog, &sample_sequence,
                               &change_sequence) < 0) {
         fprintf(stderr, "Snapshot or subscription failed\n");

@@ -54,6 +54,7 @@ test: $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_catalog
 	$(BUILD_DIR)/test_catalog
 
 integration: all $(BUILD_DIR)/idle_clients
+	tests/catchup_integration.sh
 	tests/integration.sh
 
 android:
