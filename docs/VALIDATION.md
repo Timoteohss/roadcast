@@ -87,6 +87,79 @@ approximately 60 per second independently of the batch rate.
 Both clients disconnected independently. The daemon was then stopped and both
 temporary executables were removed from `/data/local/tmp`.
 
+## 2026-07-26: protocol version 3 permissive diagnostic
+
+### Scope and limitation
+
+This run exercised the current version 3 path:
+
+```text
+OEM VHAL memory -> 60 Hz sampler -> @roadcast-v3-202045
+                -> two concurrent version 3 clients for 12 seconds
+```
+
+The device was still `Permissive`. The daemon ran as `u:r:su:s0`, launched with
+`su 0`. This validates the functional and performance path but **does not prove
+that Roadcast works under SELinux Enforcing**. Enforcing validation remains a
+release gate and must use the intended production launch domain.
+
+Roadcast did not call `setenforce`, change policy, reboot, stop the VHAL, or
+modify vendor files.
+
+### Target and build
+
+```text
+device: IHU629G
+Android: 9
+architecture: ARM64
+VHAL PID: 295
+VHAL process: android.hardware.automotive.vehicle@2.0-service
+SELinux state: Permissive
+Roadcast context: u:r:su:s0
+NDK: 28.2.13676358
+protocol: 3
+schema: version 1, hash 0x0ceade5f14ed7915
+```
+
+### Results
+
+The source resolver found all `111/111` frame symbols. The daemon's ten-second
+statistics window reported:
+
+```text
+effective sampling rate: 59.90 Hz
+changed frames per sample: 6.10
+source read errors: 0
+/proc/PID/mem fallback batches: 0
+coalesced samples: 0
+client queue drops: 0
+session timeouts/rejections: 0
+```
+
+Both clients received the same initial frozen snapshot and completed 12 seconds
+with:
+
+```text
+frame batches: approximately 20-23 per second
+changed frame records: approximately 360-375 per second
+signal batches: approximately 19-22 per second
+changed signal records: approximately 49-63 per second
+sequence gaps: 0
+resynchronizations: 0
+```
+
+A process sample while both clients were connected reported two threads,
+4712 KiB RSS, 12332 KiB virtual size, and 3.3% CPU in that `top` interval.
+
+No AVC entry matching the Roadcast process, PID, VHAL, `process_vm_readv`, or
+`/proc/PID/mem` appeared in the captured denial tail. The tail did contain
+pre-existing permissive denials for the old geelybattery memfd experiment and a
+`su` setuid operation. Absence of a matching permissive AVC is useful evidence,
+but it is not a substitute for an Enforcing run.
+
+The daemon was terminated normally and both uniquely named test binaries were
+removed from `/data/local/tmp`.
+
 ## Host validation
 
 `make test` validates explicit wire encoding, handshake payloads, frame batches,
@@ -106,6 +179,8 @@ filesystem Unix socket. It verifies:
 - the 111-frame snapshot is retrieved as multiple bounded pages;
 - decoded fake-source updates are observed/valid and carry non-zero
   first-observed and last-change timestamps;
+- a dedicated one-slot session pauses and resumes a multipage subscription
+  catch-up before receiving `SUBSCRIBED`;
 - a paused client overflows its bounded queue, receives `RESYNC_REQUIRED`,
   retrieves a new consistent snapshot, subscribes again, and resumes with zero
   sequence gaps after recovery.

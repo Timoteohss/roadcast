@@ -216,10 +216,31 @@ therefore treats the startup bytes as an unobserved baseline. It marks a frame
 observed only after detecting a byte transition. This may leave a genuinely
 constant frame in `never observed`, but avoids inventing source presence.
 
-Per-client output queues now contain 64 fixed 2048-byte slots. This is enough
-for the current 815-signal catch-up under the larger version 3 records while
-remaining bounded. VHAL properties must not be added until catch-up can resume
-incrementally without requiring the entire future catalog to fit those slots.
+Per-client output queues retain 16 fixed 2048-byte slots. Subscription catch-up
+is resumable: it fills available slots, continues from write callbacks, and
+repeats against the latest canonical state before acknowledging `SUBSCRIBED`.
+The dedicated integration case constrains a session to one output slot and
+delays subscription until a multipage catch-up is required. Successful
+subscription proves catch-up no longer depends on the entire catalog fitting in
+the queue.
+
+## D-016: SELinux Enforcing is a release gate
+
+**Status:** accepted.
+
+Roadcast is required to operate on an SELinux Enforcing vehicle without
+modifying vendor policy. Root UID and a successful `su 0` run on a Permissive
+device are not acceptance evidence because SELinux authorization is based on
+the process domain, not only the Linux UID.
+
+The release proof must run the production binary through the intended
+installation and launch mechanism on an Enforcing target. It must demonstrate
+VHAL source discovery, remote memory reads, socket access from a real app
+domain, and sustained streaming without relevant AVC denials.
+
+Permissive runs remain useful for functional, performance, and would-deny AVC
+diagnostics. Roadcast tests must not call `setenforce`, install policy, or alter
+vendor files without explicit authorization for that exact experiment.
 
 ## Questoes abertas
 
