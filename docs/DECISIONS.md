@@ -238,6 +238,12 @@ installation and launch mechanism on an Enforcing target. It must demonstrate
 VHAL source discovery, remote memory reads, socket access from a real app
 domain, and sustained streaming without relevant AVC denials.
 
+The 2026-07-26 Enforcing spike satisfied the source-side portion in
+`u:r:su:s0`: the daemon resolved and sampled all 111 frames and served a version
+3 client without relevant AVC denials. Production launch-domain assignment and
+socket access from a real Android app domain remain unsatisfied portions of this
+gate.
+
 Permissive runs remain useful for functional, performance, and would-deny AVC
 diagnostics. Roadcast tests must not call `setenforce`, install policy, or alter
 vendor files without explicit authorization for that exact experiment.

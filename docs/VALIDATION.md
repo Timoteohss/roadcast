@@ -160,6 +160,66 @@ but it is not a substitute for an Enforcing run.
 The daemon was terminated normally and both uniquely named test binaries were
 removed from `/data/local/tmp`.
 
+## 2026-07-26: protocol version 3 under SELinux Enforcing
+
+### Safety controls
+
+This was an explicitly authorized transient Enforcing test. Before changing
+state, a root watchdog shell was started to restore `Permissive` after 25
+seconds. The active test shell also installed an exit trap that restored the
+original state.
+
+The observed sequence was:
+
+```text
+before:   Permissive
+active:   Enforcing
+restored: Permissive
+```
+
+The host independently confirmed `Permissive` after the test. No policy,
+partition, vendor file, VHAL process, or boot configuration was changed.
+
+### Scope
+
+```text
+OEM VHAL memory -> roadcastd in u:r:su:s0 at 60 Hz
+                -> abstract Unix socket
+                -> roadcastctl in u:r:su:s0 for 4 seconds
+```
+
+The daemon resolved all `111/111` frame symbols and remained alive in
+`Enforcing`. The version 3 client received:
+
+```text
+schema: 815 signals, version 1, hash 0x0ceade5f14ed7915
+snapshot: sample_seq=110, change_seq=37
+frame batches: approximately 20 per second
+changed frame records: approximately 367-372 per second
+signal batches: approximately 19-20 per second
+changed signal records: approximately 49-55 per second
+sequence gaps: 0
+resynchronizations: 0
+```
+
+The client exited successfully. The relevant kernel denial query returned no
+AVC entry for Roadcast, the VHAL, remote memory access, or the test PID while
+Enforcing was active.
+
+### What this proves
+
+This proves that the current source discovery, `process_vm_readv` acquisition,
+protocol version 3 server, and abstract-socket client path work under Enforcing
+when both Roadcast processes run in `u:r:su:s0`.
+
+It does not yet prove that an Android application domain such as
+`u:r:system_app:s0` can connect to `@roadcast`, nor that a future production
+launcher will assign the daemon the same `su` domain. Those two execution-domain
+boundaries remain part of the production installation test.
+
+The daemon was terminated, both uniquely named binaries were removed from
+`/data/local/tmp`, and no Roadcast test process remained.
+
 ## Host validation
 
 `make test` validates explicit wire encoding, handshake payloads, frame batches,
