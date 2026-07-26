@@ -1,0 +1,29 @@
+# Build outputs
+/build/
+/out/
+/cmake-build-*/
+/.deps/
+
+# Native artifacts
+*.a
+*.d
+*.o
+*.so
+*.dylib
+*.profraw
+*.profdata
+__pycache__/
+*.pyc
+
+# Runtime artifacts and captures
+*.core
+*.log
+*.pcap
+*.trace
+
+# Editors and host metadata
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
