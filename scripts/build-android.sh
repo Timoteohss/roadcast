@@ -40,7 +40,6 @@ COMMON_FLAGS=(
   -std=c11
   -O2
   -g
-  -fPIE
   -Wall
   -Wextra
   -Wpedantic
@@ -48,7 +47,7 @@ COMMON_FLAGS=(
   -I"$ROOT/include"
 )
 
-"$CC" "${COMMON_FLAGS[@]}" -I"$LIBUV_PREFIX/include" \
+"$CC" "${COMMON_FLAGS[@]}" -fPIE -I"$LIBUV_PREFIX/include" \
   -o "$OUT_DIR/roadcastd" \
   "$ROOT/src/roadcastd.c" \
   "$ROOT/src/vhal_source.c" \
@@ -58,11 +57,18 @@ COMMON_FLAGS=(
   "$LIBUV_PREFIX/lib/libuv.a" \
   -pie -pthread -ldl
 
-"$CC" "${COMMON_FLAGS[@]}" \
+"$CC" "${COMMON_FLAGS[@]}" -fPIE \
   -o "$OUT_DIR/roadcastctl" \
   "$ROOT/src/roadcastctl.c" \
   "$ROOT/src/protocol.c" \
   -pie
 
+"$CC" "${COMMON_FLAGS[@]}" -fPIC -shared \
+  -o "$OUT_DIR/libroadcast_client.so" \
+  "$ROOT/src/client.c" \
+  "$ROOT/src/protocol.c" \
+  -pthread
+
 echo "Android binaries:"
-file "$OUT_DIR/roadcastd" "$OUT_DIR/roadcastctl" 2>/dev/null || true
+file "$OUT_DIR/roadcastd" "$OUT_DIR/roadcastctl" \
+  "$OUT_DIR/libroadcast_client.so" 2>/dev/null || true

@@ -1,4 +1,5 @@
 CC ?= cc
+AR ?= ar
 PKG_CONFIG ?= pkg-config
 
 BUILD_DIR := build
@@ -18,7 +19,8 @@ LDFLAGS ?=
 
 .PHONY: all android clean generate test integration
 
-all: $(BUILD_DIR)/roadcastd $(BUILD_DIR)/roadcastctl
+all: $(BUILD_DIR)/roadcastd $(BUILD_DIR)/roadcastctl \
+	$(BUILD_DIR)/libroadcast_client.a $(BUILD_DIR)/roadcast_client_smoke
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -37,6 +39,19 @@ $(BUILD_DIR)/roadcastd: src/roadcastd.c src/vhal_source.c $(COMMON_SOURCES) $(CA
 $(BUILD_DIR)/roadcastctl: src/roadcastctl.c $(COMMON_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
 		src/roadcastctl.c $(COMMON_SOURCES)
+
+$(BUILD_DIR)/client.o: src/client.c $(COMMON_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ src/client.c
+
+$(BUILD_DIR)/client_protocol.o: src/protocol.c $(COMMON_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ src/protocol.c
+
+$(BUILD_DIR)/libroadcast_client.a: $(BUILD_DIR)/client.o $(BUILD_DIR)/client_protocol.o
+	$(AR) rcs $@ $^
+
+$(BUILD_DIR)/roadcast_client_smoke: src/roadcast_client_smoke.c $(BUILD_DIR)/libroadcast_client.a $(COMMON_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
+		src/roadcast_client_smoke.c $(BUILD_DIR)/libroadcast_client.a -pthread
 
 $(BUILD_DIR)/test_protocol: tests/test_protocol.c $(COMMON_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \

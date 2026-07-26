@@ -72,6 +72,15 @@ grep -q '^protocol abuse cases passed: 8$' \
   "$TEMP_DIR/protocol-abuse.stdout"
 grep -q '^welcome: protocol=3 ' "$TEMP_DIR/post-abuse-client.stdout"
 
+"$ROOT/build/roadcast_client_smoke" "$SOCKET" ESC_VehicleSpeed 2 \
+  >"$TEMP_DIR/client-sdk.stdout" 2>"$TEMP_DIR/client-sdk.stderr"
+grep -q '^client-sdk: protocol=3 hz=240 frames=111 signals=815 schema=1$' \
+  "$TEMP_DIR/client-sdk.stdout"
+grep -q '^client-value: name=ESC_VehicleSpeed .* state=2 ' \
+  "$TEMP_DIR/client-sdk.stdout"
+grep -Eq '^client-summary: connected=1 sample_seq=[1-9][0-9]* change_seq=[1-9][0-9]* ' \
+  "$TEMP_DIR/client-sdk.stdout"
+
 "$ROOT/build/roadcastctl" --socket "$SOCKET" --seconds 2 \
   --signal VehicleSpeed \
   >"$TEMP_DIR/client-a.stdout" 2>"$TEMP_DIR/client-a.stderr" &
