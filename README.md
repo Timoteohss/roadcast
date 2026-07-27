@@ -136,10 +136,11 @@ run publishes a 14-day workflow artifact containing:
 - `libroadcast_client.so`;
 - `SHA256SUMS`.
 
-Pushing a `v*` tag, for example `v0.1.1`, runs the same gates and publishes or
-updates a GitHub Release with those files. The release job uses the workflow's
-scoped `contents: write` permission; pull-request and normal build jobs remain
-read-only.
+After a successful push to `main`, the same files replace the assets in the
+rolling `edge` GitHub prerelease, whose tag points to the validated commit.
+Pushing a `v*` tag, for example `v0.1.1`, runs the same gates and publishes a
+separate versioned GitHub Release. The release job uses the workflow's scoped
+`contents: write` permission; pull-request and build jobs remain read-only.
 
 See [Android deployment](docs/ANDROID_DEPLOYMENT.md) for installation and the
 supervision model.

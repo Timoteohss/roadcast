@@ -61,7 +61,9 @@ the APK asset.
 
 The `Build` GitHub Actions workflow cross-compiles the production Android
 ARM64/API 28 artifacts after host tests pass. Normal workflow runs retain the
-files for 14 days. A `v*` tag also publishes them as GitHub Release assets:
+files for 14 days. Each successful push to `main` also replaces the assets in
+the rolling `edge` prerelease and moves that tag to the validated commit. A
+`v*` tag publishes a separate versioned GitHub Release:
 
 ```text
 roadcastd
