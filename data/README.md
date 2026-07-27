@@ -4,13 +4,8 @@
 contains bit layouts extracted from DWARF in the OEM VHAL binary and the small
 calibration overlay maintained by the sibling `vhalpeek` project.
 
-Imported from:
-
-```text
-<vhalpeek-checkout>/data/dbc.json
-```
-
-The import used the state present on 2026-07-26:
+It was imported from `data/dbc.json` in the sibling `vhalpeek` checkout, using
+the state present on 2026-07-26:
 
 ```text
 frames: 111
