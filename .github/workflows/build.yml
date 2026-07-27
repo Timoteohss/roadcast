@@ -60,9 +60,13 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install Android NDK
+      - name: Set up Android SDK and NDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
+        with:
+          packages: ndk;${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Configure Android NDK
         run: |
-          sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
           echo "ANDROID_NDK=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
 
       - name: Restore Android libuv

@@ -28,6 +28,11 @@ static pid_t find_pid(const char *needle) {
     DIR *directory = opendir("/proc");
     if (!directory)
         return -1;
+    int proc_fd = dirfd(directory);
+    if (proc_fd < 0) {
+        closedir(directory);
+        return -1;
+    }
 
     pid_t found = -1;
     struct dirent *entry;
@@ -35,10 +40,13 @@ static pid_t find_pid(const char *needle) {
         if (entry->d_name[0] < '0' || entry->d_name[0] > '9')
             continue;
 
-        char path[64];
         char command[4096];
-        snprintf(path, sizeof(path), "/proc/%s/cmdline", entry->d_name);
-        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        int pid_fd =
+            openat(proc_fd, entry->d_name, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (pid_fd < 0)
+            continue;
+        int fd = openat(pid_fd, "cmdline", O_RDONLY | O_CLOEXEC);
+        close(pid_fd);
         if (fd < 0)
             continue;
         ssize_t length = read(fd, command, sizeof(command) - 1);
