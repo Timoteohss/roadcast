@@ -38,7 +38,7 @@ Roadcast performs read-only observation of memory in a process running on the
 user's own vehicle head unit. It does not write vehicle properties, does not
 write into any other process, does not transmit CAN frames, does not invoke
 vehicle controls, and does not alter ECU state. These constraints are
-structural project invariants, not configuration. See AGENTS.md.
+structural project invariants, not configuration. See docs/ARCHITECTURE.md.
 
 Roadcast does not circumvent any technological protection measure and contains
 no rooting, unlocking, or exploit mechanism. It requires a head unit that

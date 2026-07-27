@@ -21,6 +21,9 @@ __pycache__/
 *.pcap
 *.trace
 
+# Local agent instructions, not part of the published project
+/AGENTS.md
+
 # Editors and host metadata
 .DS_Store
 .idea/

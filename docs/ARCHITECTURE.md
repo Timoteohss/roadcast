@@ -220,7 +220,6 @@ the documented responsibility boundaries:
 ```text
 roadcast/
 ├── README.md
-├── AGENTS.md
 ├── Makefile
 ├── docs/
 │   ├── ARCHITECTURE.md
