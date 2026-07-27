@@ -1,60 +1,69 @@
 # Roadcast
 
-Roadcast e um broker local, read-only, de sinais do veiculo.
+Roadcast is a local, read-only broker for vehicle signals.
 
-Seu objetivo e expor para multiplos aplicativos os dados que chegam ao VHAL, mas
-nao sao publicados pelas APIs Android Automotive. O daemon le a memoria do VHAL
-uma unica vez, mantem em RAM o estado completo conhecido do veiculo e distribui
-esse estado para qualquer cliente conectado.
+Its purpose is to expose, to multiple applications, the data that reaches the
+VHAL but is not published through the Android Automotive APIs. The daemon reads
+VHAL memory once, keeps the complete known vehicle state in RAM, and distributes
+that state to every connected client.
 
-O projeto nasce a partir da investigacao feita no `vhalpeek`, mas nao e uma
-extensao dele:
+The project grew out of the investigation done in `vhalpeek`, but it is not an
+extension of it:
 
-- `vhalpeek` continua sendo uma ferramenta de investigacao e diagnostico;
-- Roadcast sera um servico de longa duracao, com protocolo estavel;
-- os consumidores nao conhecem detalhes da memoria interna do VHAL;
-- nenhum consumidor e tratado como o "app principal".
+- `vhalpeek` remains an investigation and diagnostic tool;
+- Roadcast is a long-running service with a discoverable protocol;
+- consumers know nothing about the VHAL's internal memory layout;
+- no consumer is treated as the "main app".
 
-## Principios iniciais
+## Principles
 
-- **Read-only:** Roadcast observa o veiculo; nao envia comandos ao VHAL ou ao CAN.
-- **App-agnostic:** N aplicativos podem consumir o mesmo daemon.
-- **Catalogo completo:** sinais uteis e aparentemente inuteis sao igualmente
-  expostos.
-- **Sem persistencia implicita:** snapshots, filas e transporte ficam em RAM.
-- **Baixa latencia:** aquisicao alvo de 60 Hz, configuravel.
-- **Consumidor lento nao bloqueia produtor:** clientes possuem filas limitadas.
-- **Descoberta dinamica:** o daemon publica schema, IDs, tipos, unidades e origem.
-- **Compatibilidade explicita:** protocolo, schema e implementacao possuem versoes
-  independentes.
+- **Read-only:** Roadcast observes the vehicle; it never sends commands to the
+  VHAL or to the CAN bus.
+- **App-agnostic:** N applications can consume the same daemon.
+- **Complete catalog:** useful and apparently useless signals are exposed
+  equally.
+- **No implicit persistence:** snapshots, queues, and transport stay in RAM.
+- **Low latency:** acquisition targets 60 Hz, configurable.
+- **A slow consumer never blocks the producer:** every client has a bounded
+  queue.
+- **Dynamic discovery:** the daemon publishes schema, IDs, types, units, and
+  origin.
+- **Explicit compatibility:** protocol, schema, and implementation are versioned
+  independently.
 
-## Transporte inicial
+## Transport
 
-O transporte principal sera um socket Unix abstrato, portanto sem arquivo de
-socket no filesystem:
+The primary transport is an abstract Unix socket, so no socket file is created
+on the filesystem:
 
 ```text
 @roadcast
 ```
 
-Cada cliente recebe:
+Every client receives:
 
-1. schema/catalogo;
-2. snapshot completo inicial;
-3. lotes incrementais com as entradas que mudaram;
-4. heartbeats e numeros de sequencia para detectar perda ou congelamento.
+1. the schema/catalog;
+2. a complete initial snapshot;
+3. incremental batches carrying only the entries that changed;
+4. heartbeats and sequence numbers, so loss or stalling is detectable.
 
-Memoria compartilhada podera existir como fast path opcional, mas nao sera
-necessaria para implementar um cliente Roadcast.
+Shared memory may later exist as an optional fast path, but it will never be
+required to implement a Roadcast client.
 
-## Documentacao
+## Documentation
 
-- [Arquitetura](docs/ARCHITECTURE.md)
-- [Protocolo](docs/PROTOCOL.md)
-- [Decisoes](docs/DECISIONS.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Protocol](docs/PROTOCOL.md)
+- [Decisions](docs/DECISIONS.md)
 - [Validation](docs/VALIDATION.md)
+- [Catalog surface](docs/CATALOG_SURFACE.md)
+- [Client SDK](docs/CLIENT_SDK.md)
+- [Android deployment](docs/ANDROID_DEPLOYMENT.md)
+- [Changelog](CHANGELOG.md)
 
-## Estado
+## Status
+
+Version 0.1.0. Protocol version 3, schema version 1.
 
 The first executable tracer is implemented and validated. It provides:
 
@@ -66,11 +75,13 @@ The first executable tracer is implemented and validated. It provides:
 - consistent decoded-signal snapshots with subscription catch-up;
 - paged raw-frame snapshots and explicit observation state/timestamps;
 - directional request/response limits and operational heartbeat metrics;
-- a reference CLI client;
+- a reference CLI client and a reusable client SDK;
 - protocol, malformed-input, resynchronization, and multi-client tests;
 - Android ARM64/API 28 cross-compilation scripts.
 
-The wire protocol is still experimental and is not frozen.
+**The wire protocol is experimental and is not frozen.** At 0.x, message
+layouts, numeric values, and names may change without a compatibility path. See
+the known limits in [CHANGELOG.md](CHANGELOG.md).
 
 Inspect a decoded signal by name:
 
@@ -111,3 +122,17 @@ An existing Android libuv installation can be reused:
 ```bash
 LIBUV_PREFIX=/path/to/libuv-android make android
 ```
+
+See [Android deployment](docs/ANDROID_DEPLOYMENT.md) for installation and the
+supervision model.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
+
+Roadcast is an independent research and interoperability project. It is not
+affiliated with or endorsed by Geely, Google, or any vehicle manufacturer, and
+it redistributes no manufacturer code, binary, or proprietary database. Read
+[NOTICE](NOTICE) before using it: running this software may affect your vehicle
+warranty, and you are responsible for having the right to access the vehicle you
+run it on.
