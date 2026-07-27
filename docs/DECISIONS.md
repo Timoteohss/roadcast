@@ -258,4 +258,14 @@ vendor files without explicit authorization for that exact experiment.
 - estrategia de teste sem depender do carro;
 - mecanismo definitivo de instalacao e inicializacao do daemon;
 - quais partes do leitor atual podem ser extraidas sem acoplar Roadcast ao
-  layout interno do `vhalpeek`.
+  layout interno do `vhalpeek`;
+- whether to expose the 44 transmit buffers and their 580 DWARF-defined signals.
+  Reading them adds no write path, but the schema must distinguish an observed
+  transmit buffer from an observed receive frame, and `kind`/`source` currently
+  cannot express that difference. See `docs/CATALOG_SURFACE.md`;
+- how to represent the 61 percent of already-read frame bits that carry no
+  DWARF-defined signal. They are only discoverable empirically, so any catalog
+  entry for them would have a name Roadcast invented rather than one extracted,
+  which the data-semantics rules otherwise forbid;
+- how to detect that a VHAL update changed or stripped the symbol surface, given
+  that the daemon starts successfully when only a subset of buffers resolves.
