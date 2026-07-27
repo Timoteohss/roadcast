@@ -765,6 +765,18 @@ int32_t roadcast_client_find_signal(const roadcast_client_t *client,
     return -1;
 }
 
+int32_t
+roadcast_client_find_signal_by_stable_id(const roadcast_client_t *client,
+                                         uint64_t stable_id) {
+    if (!client)
+        return ROADCAST_CLIENT_ERR_ARGUMENT;
+    for (uint32_t i = 0; i < client->signal_count; i++) {
+        if (client->schema[i].stable_id == stable_id)
+            return (int32_t)i;
+    }
+    return -1;
+}
+
 int roadcast_client_read_signal(roadcast_client_t *client, uint32_t index,
                                 roadcast_signal_value_t *value) {
     return roadcast_client_read_signals(client, &index, 1, value);

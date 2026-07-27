@@ -62,6 +62,10 @@ roadcast_client_schema_at(const roadcast_client_t *client, uint32_t index);
 int32_t roadcast_client_find_signal(const roadcast_client_t *client,
                                     const char *name);
 
+int32_t
+roadcast_client_find_signal_by_stable_id(const roadcast_client_t *client,
+                                         uint64_t stable_id);
+
 int roadcast_client_read_signal(roadcast_client_t *client, uint32_t index,
                                 roadcast_signal_value_t *value);
 

@@ -36,15 +36,18 @@ The stable C entry point is
 operations are:
 
 - `roadcast_client_connect()` and `roadcast_client_close()` for ownership.
-- `roadcast_client_find_signal()` for one-time name-to-index resolution.
+- `roadcast_client_find_signal()` for convenient one-time name resolution.
+- `roadcast_client_find_signal_by_stable_id()` for unambiguous resolution when
+  names are duplicated or a cached schema identity is available.
 - `roadcast_client_read_signal()` and `roadcast_client_read_signals()` for
   synchronous cache reads.
 - `roadcast_client_status()` and `roadcast_client_sample_age_ns()` for health
   and freshness.
 
-Callers should resolve signal names once, retain their numeric indexes, and use
-batched reads for a gauge frame. Schema pointers are immutable and remain valid
-until the client is closed.
+Callers should prefer stable IDs as the durable identity, resolve them once,
+retain their numeric indexes, and use batched reads for a gauge frame. Name-only
+lookup returns the first match and is unsuitable for duplicated names. Schema
+pointers are immutable and remain valid until the client is closed.
 
 ## Android Integration
 

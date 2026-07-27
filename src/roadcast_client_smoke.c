@@ -56,6 +56,14 @@ int main(int argc, char **argv) {
         roadcast_client_close(client);
         return 1;
     }
+    const roadcast_schema_entry_t *entry =
+        roadcast_client_schema_at(client, (uint32_t)index);
+    if (!entry || roadcast_client_find_signal_by_stable_id(
+                      client, entry->stable_id) != index) {
+        fprintf(stderr, "stable signal lookup failed: %s\n", signal_name);
+        roadcast_client_close(client);
+        return 1;
+    }
 
     struct timespec delay = {.tv_sec = seconds, .tv_nsec = 0};
     while (nanosleep(&delay, &delay) < 0 && errno == EINTR)
