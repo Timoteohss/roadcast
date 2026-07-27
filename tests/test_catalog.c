@@ -82,6 +82,21 @@ static void test_decoding_and_invalid_flag(void) {
     assert(values[ambient].state == ROADCAST_OBSERVATION_UNAVAILABLE);
 }
 
+static void test_calibrated_drive_power(void) {
+    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
+    initialize_frames(frames);
+
+    uint32_t drive_power = find_signal(0x315, "VCU_DrvPwrAct");
+    assert(drive_power != UINT32_MAX);
+    assert(ROADCAST_SIGNALS[drive_power].calibrated == 1);
+    assert(ROADCAST_SIGNALS[drive_power].scale == 0.1);
+    assert(ROADCAST_SIGNALS[drive_power].offset == -204.8);
+
+    roadcast_decode_signals(frames, values);
+    assert(values[drive_power].calibrated == 1);
+}
+
 static void test_64_bit_signal(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
@@ -139,6 +154,7 @@ static void test_schema_round_trip(void) {
 int main(void) {
     test_catalog_identity();
     test_decoding_and_invalid_flag();
+    test_calibrated_drive_power();
     test_64_bit_signal();
     test_signed_63_bit_conversion();
     test_schema_round_trip();

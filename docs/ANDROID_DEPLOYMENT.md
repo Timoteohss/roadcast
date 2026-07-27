@@ -57,6 +57,23 @@ scripts/install-android.sh --device <head-unit-address>:5555
 This script is for development and recovery. Production distribution is through
 the APK asset.
 
+## GitHub build artifacts
+
+The `Build` GitHub Actions workflow cross-compiles the production Android
+ARM64/API 28 artifacts after host tests pass. Normal workflow runs retain the
+files for 14 days. A `v*` tag also publishes them as GitHub Release assets:
+
+```text
+roadcastd
+roadcastctl
+libroadcast_client.so
+SHA256SUMS
+```
+
+Verify `SHA256SUMS` before copying release binaries into a consumer. The
+GeelyBattery repository uses `scripts/update_roadcast_client.sh` to install the
+selected daemon and client library into its APK source tree.
+
 ## Security Boundary
 
 Calling `/system/xbin/su` from an Android `system_app` changes the Linux UID but

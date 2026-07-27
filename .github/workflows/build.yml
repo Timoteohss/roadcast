@@ -1,0 +1,133 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: roadcast-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  ANDROID_API: "28"
+  ANDROID_ABI: arm64-v8a
+  ANDROID_NDK_VERSION: 28.2.13676358
+  LIBUV_VERSION: 1.51.0
+
+jobs:
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential libelf-dev libuv1-dev pkg-config
+
+      - name: Verify generated catalog
+        run: |
+          make generate
+          git diff --exit-code -- \
+            include/roadcast_catalog_generated.h \
+            include/roadcast_frames.h \
+            src/catalog_generated.c
+
+      - name: Run unit tests
+        run: make test
+
+      - name: Run integration tests
+        run: make integration
+
+  android-build:
+    name: Android ARM64/API 28
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Restore Android libuv
+        id: libuv-cache
+        uses: actions/cache@v4
+        with:
+          path: .deps/libuv-android-${{ env.ANDROID_ABI }}-api${{ env.ANDROID_API }}
+          key: libuv-${{ runner.os }}-${{ env.LIBUV_VERSION }}-ndk${{ env.ANDROID_NDK_VERSION }}-${{ env.ANDROID_ABI }}-api${{ env.ANDROID_API }}
+
+      - name: Build Android libuv
+        if: steps.libuv-cache.outputs.cache-hit != 'true'
+        run: scripts/build-libuv-android.sh
+
+      - name: Cross-compile Roadcast
+        run: make android
+
+      - name: Package Android artifacts
+        run: |
+          output="build/android-${ANDROID_ABI}-api${ANDROID_API}"
+          mkdir -p dist
+          install -m 0755 "$output/roadcastd" dist/roadcastd
+          install -m 0755 "$output/roadcastctl" dist/roadcastctl
+          install -m 0755 "$output/libroadcast_client.so" dist/libroadcast_client.so
+          (
+            cd dist
+            sha256sum roadcastd roadcastctl libroadcast_client.so > SHA256SUMS
+          )
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: roadcast-android-arm64-v8a-api28-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - host-tests
+      - android-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Android artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: roadcast-android-arm64-v8a-api28-${{ github.sha }}
+          path: dist
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --verify-tag \
+              --generate-notes \
+              --title "Roadcast $TAG"
+          fi

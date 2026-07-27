@@ -43,6 +43,8 @@ not frozen and may change without a compatibility path. See `Known limits`.
 - Android ARM64 / API 28 cross-compilation (`scripts/build-android.sh`,
   `scripts/build-libuv-android.sh`) and a development installer
   (`scripts/install-android.sh`).
+- GitHub Actions host/integration tests, Android cross-build artifacts, and
+  automatic GitHub Release assets for `v*` tags.
 - `scripts/analyze-vhal-surface.py`: static ELF/DWARF analysis that diffs the
   VHAL binary's CAN surface against the catalog and exits non-zero on
   divergence, for use as a post-OTA regression check.
@@ -53,6 +55,8 @@ not frozen and may change without a compatibility path. See `Known limits`.
 
 - Protocol v3 confirmed against the vehicle on 2026-07-26 (IHU629G, Android 9,
   ARM64).
+- `VCU_DrvPwrAct` on CAN frame `0x315` confirmed on the vehicle with
+  `0.1 kW` scale and `-204.8 kW` offset and marked as calibrated.
 - Source reads confirmed with SELinux Enforcing from `u:r:su:s0`.
 - Catalog confirmed complete against the analyzed VHAL build: all 111 receive
   buffers and all receive-side DWARF signals are covered, with zero overlapping
@@ -64,7 +68,7 @@ not frozen and may change without a compatibility path. See `Known limits`.
   are not a stable contract at 0.x.
 - `valid` currently means "symbol resolved", not "observed". Per-frame freshness
   timestamps do not exist yet.
-- 813 of 815 signals carry `scale=1.0`, `offset=0`, and no unit. Only two
+- 812 of 815 signals carry `scale=1.0`, `offset=0`, and no unit. Three
   signals are calibrated.
 - 61 percent of the bits in the frames already being read carry no
   DWARF-defined signal and cannot be named by static analysis.

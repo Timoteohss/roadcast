@@ -1,5 +1,7 @@
 # Roadcast
 
+[![Build](https://github.com/Timoteohss/roadcast/actions/workflows/build.yml/badge.svg)](https://github.com/Timoteohss/roadcast/actions/workflows/build.yml)
+
 Roadcast is a local, read-only broker for vehicle signals.
 
 Its purpose is to expose, to multiple applications, the data that reaches the
@@ -122,6 +124,22 @@ An existing Android libuv installation can be reused:
 ```bash
 LIBUV_PREFIX=/path/to/libuv-android make android
 ```
+
+## Continuous integration and releases
+
+GitHub Actions runs host unit/integration tests and cross-compiles the Android
+ARM64/API 28 binaries on every pull request and push to `main`. Each successful
+run publishes a 14-day workflow artifact containing:
+
+- `roadcastd`;
+- `roadcastctl`;
+- `libroadcast_client.so`;
+- `SHA256SUMS`.
+
+Pushing a `v*` tag, for example `v0.1.1`, runs the same gates and publishes or
+updates a GitHub Release with those files. The release job uses the workflow's
+scoped `contents: write` permission; pull-request and normal build jobs remain
+read-only.
 
 See [Android deployment](docs/ANDROID_DEPLOYMENT.md) for installation and the
 supervision model.

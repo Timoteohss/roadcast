@@ -7098,7 +7098,7 @@
    "offset": -204.8,
    "unit": "kW",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "VCU_ThermalPwrAct",
