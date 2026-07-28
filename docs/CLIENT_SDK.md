@@ -55,10 +55,11 @@ The Android build produces `libroadcast_client.so`. Application-specific Dart
 FFI and JNI wrappers should be thin adapters over this library; they must not
 implement protocol parsing independently.
 
-For `geelybattery`, the first migration keeps two independent sessions:
+For the first application migration, the integration keeps two independent
+sessions:
 
 - A Dart FFI-owned session for synchronous gauge reads.
-- A Kotlin/JNI-owned session for the foreground service and Room ingestion when
+- A Kotlin/JNI-owned session for the foreground service and data ingestion when
   the Flutter engine is absent.
 
 This duplicates a small RAM cache and one local socket per runtime, but preserves

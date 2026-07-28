@@ -62,7 +62,7 @@ not frozen and may change without a compatibility path. See `Known limits`.
   buffers and all receive-side DWARF signals are covered, with zero overlapping
   bit assignments.
 
-### Known limits
+### Known Limits
 
 - The wire protocol is experimental. Message layouts, numeric values, and names
   are not a stable contract at 0.x.
@@ -84,4 +84,4 @@ not frozen and may change without a compatibility path. See `Known limits`.
   drift must be detected with `scripts/analyze-vhal-surface.py` rather than
   inferred from a successful startup.
 
-[0.1.0]: https://github.com/Timoteohss/roadcast/releases/tag/v0.1.0
+[0.1.0]: https://github.com/roadcast/roadcast/releases/tag/v0.1.0

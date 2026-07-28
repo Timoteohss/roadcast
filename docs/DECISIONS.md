@@ -1,109 +1,107 @@
-# Decisoes de arquitetura
+# Architecture Decisions
 
-Registro inicial das decisoes tomadas durante o desenho. Este arquivo sera
-dividido em ADRs individuais se o volume ou a necessidade de historico crescer.
+Initial record of decisions made during design. This file will be divided into
+individual ADRs if the volume or history requirement grows.
 
-## D-001: projeto independente do vhalpeek
+## D-001: Independent Project
 
-**Estado:** aceita.
+**Status:** Accepted.
 
-Roadcast sera um projeto novo. O `vhalpeek` preserva seu papel de ferramenta de
-engenharia reversa e diagnostico. Codigo de leitura comprovado pode ser extraido
-ou reutilizado, mas o protocolo de producao nao sera adicionado implicitamente a
-uma CLI monolitica.
+Roadcast is a new project. The VHAL reader was validated during previous
+studies, but the production protocol will not be added implicitly to a monolithic
+CLI tool.
 
-## D-002: servidor app-agnostic
+## D-002: App-Agnostic Server
 
-**Estado:** aceita.
+**Status:** Accepted.
 
-Nenhum app possui o snapshot ou controla o ciclo de vida do daemon. Todas as
-sessoes possuem os mesmos direitos de leitura, sujeitos a uma politica de acesso
-que ainda sera definida.
+No application owns the snapshot or controls the daemon lifecycle. All sessions
+have the same read rights, subject to an access policy that will be defined
+later.
 
-## D-003: catalogo completo
+## D-003: Complete Catalog
 
-**Estado:** aceita.
+**Status:** Accepted.
 
-Roadcast nao seleciona apenas sinais considerados uteis. Frames, sinais
-decodificados e properties observaveis entram no catalogo, inclusive quando
-escala ou significado ainda nao estiverem confirmados.
+Roadcast does not select only signals considered useful. Frames, decoded
+signals, and observable properties enter the catalog, even when scale or meaning
+are not yet confirmed.
 
-Incerteza sera representada por metadados; nao por exclusao silenciosa.
+Uncertainty is represented by metadata, not by silent exclusion.
 
-## D-004: runtime sem persistencia
+## D-004: Runtime Without Persistence
 
-**Estado:** aceita.
+**Status:** Accepted.
 
-O daemon nao grava snapshots, backlog ou telemetria. Estado operacional, filas e
-transporte permanecem em RAM. Persistencia e uma escolha de cada consumidor.
+The daemon does not write snapshots, backlog, or telemetry. Operational state,
+queues, and transport remain in RAM. Persistence is a choice for each consumer.
 
-## D-005: 60 Hz configuravel
+## D-005: Configurable 60 Hz
 
-**Estado:** aceita como alvo inicial.
+**Status:** Accepted as initial target.
 
-O sampler tera alvo de 60 Hz, com configuracao disponivel. A frequencia efetiva
-sera medida e exposta. Frequencia de amostragem nao sera confundida com a
-frequencia real de publicacao de cada ECU.
+The sampler will target 60 Hz, with configuration available. The effective rate
+will be measured and exposed. Sampling rate must not be confused with the actual
+publication rate of each ECU.
 
-## D-006: socket Unix abstrato como transporte base
+## D-006: Abstract Unix Socket as Base Transport
 
-**Estado:** aceita para o primeiro tracer.
+**Status:** Accepted for the first tracer.
 
-O socket abstrato evita arquivo no filesystem e ja foi comprovado no aparelho
-durante a investigacao do `vhalpeek`. O protocolo base nao dependera de memoria
-compartilhada.
+The abstract socket avoids filesystem files and was validated on the device
+during previous studies. The base protocol will not depend on shared memory.
 
-Loopback TCP permanece uma alternativa de compatibilidade caso testes com apps
-em outros dominios encontrem restricoes de conexao ao socket Unix.
+Loopback TCP remains a compatibility alternative if tests with applications in
+other domains encounter connection restrictions to the Unix socket.
 
-## D-007: snapshot inicial seguido de deltas
+## D-007: Complete Snapshot Followed by Deltas
 
-**Estado:** aceita.
+**Status:** Accepted.
 
-Todo cliente recebe estado completo ao conectar e depois somente entradas
-alteradas. Isso expoe todo o catalogo sem retransmitir milhares de entradas
-paradas a cada ciclo.
+Every client receives complete state when connecting, then only changed entries.
+This exposes the entire catalog without retransmitting thousands of idle entries
+every cycle.
 
-## D-008: nenhum cliente bloqueia o sampler
+## D-008: No Client Blocks the Sampler
 
-**Estado:** aceita.
+**Status:** Accepted.
 
-Filas por cliente sao limitadas. Sob atraso, o daemon privilegia o estado atual,
-marca descontinuidade e exige ressincronizacao. Backpressure nunca alcanca a
-thread de aquisicao.
+Per-client queues are bounded. Under delay, the daemon prefers current state,
+marks discontinuity, and requires resynchronization. Backpressure never reaches
+the acquisition thread.
 
-## D-009: shared memory nao e requisito
+## D-009: Shared Memory Is Not a Requirement
 
-**Estado:** aceita.
+**Status:** Accepted.
 
-Memfd ou ashmem podem ser adicionados como fast path. O cliente mais simples
-precisa apenas implementar o protocolo de socket.
+memfd or ashmem can be added as a fast path. The simplest client only needs to
+implement the socket protocol.
 
-Um futuro fd adotado por cliente nao substituira um buffer global, pois isso
-congelaria consumidores existentes.
+A future fd adopted by a client must not replace a global buffer, because that
+would freeze existing consumers.
 
-## D-010: filtragem inicial pertence ao cliente
+## D-010: Initial Filtering Belongs to the Client
 
-**Estado:** aceita para o primeiro protocolo.
+**Status:** Accepted for the first protocol.
 
-As origens tecnicas iniciais sao frames CAN crus, sinais CAN decodificados e
-properties da `VehiclePropertyStore`. Nomes como PEPS, BCM, BMSH e VCU descrevem
-o produtor ou dominio semantico; nao sao transportes mutuamente exclusivos. Um
-sinal PEPS pode existir no CAN e ser republicado como property pelo VHAL.
+The initial technical sources are raw CAN frames, decoded CAN signals, and
+VehiclePropertyStore properties. Names like PEPS, BCM, BMSH, and VCU describe
+the producer or semantic domain, not mutually exclusive transports. A PEPS
+signal can exist on CAN and be republished as a property by the VHAL.
 
-O schema identificara `kind`, origem e dominio para permitir filtragem local.
-O servidor enviara snapshot completo e deltas completos por default. Subscriptions
-server-side por origem ou dominio so serao adicionadas se medidas mostrarem custo
-relevante, ou se surgirem requisitos de acesso diferentes por classe de dado.
+The schema identifies `kind`, source, and domain to allow local filtering. The
+server sends complete snapshots and complete deltas by default. Server-side
+subscriptions by source or domain will only be added if measurements show
+significant cost, or if different access requirements arise by data class.
 
-Essa escolha evita estado e ressincronizacao adicionais por sessao. Medicoes no
-carro em 2026-07-26 mostraram, a 120 Hz, aproximadamente 2,8 frames, 0,4 sinais e
-0,4 properties alterados por tick, embora o catalogo total tenha 111 frames, 815
-sinais e 1804 properties.
+This choice avoids additional state and resynchronization per session.
+Measurements on the vehicle in 2026-07-26 showed, at 120 Hz, approximately 2.8
+frames, 0.4 signals, and 0.4 properties changed per tick, although the total
+catalog has 111 frames, 815 signals, and 1804 properties.
 
-## D-011: libuv runtime with a small native wire protocol
+## D-011: libuv Runtime with a Small Native Wire Protocol
 
-**Status:** accepted.
+**Status:** Accepted.
 
 Roadcast uses libuv for the event loop, timers, signal handling, client
 lifecycle, asynchronous I/O, and write queue observation. The project does not
@@ -129,9 +127,9 @@ NNG, ZeroMQ, gRPC, protobuf-c, nanopb, and libevent are not baseline
 dependencies. They may only be reconsidered when a measured requirement cannot
 be met by libuv and the existing protocol.
 
-## D-012: generated CAN catalog and protocol version 2
+## D-012: Generated CAN Catalog and Protocol Version 2
 
-**Status:** accepted.
+**Status:** Accepted.
 
 `data/dbc.json` is the source of truth for the initial 111 raw CAN frames and
 815 decoded signals. A deterministic generator emits the compiled frame list,
@@ -163,9 +161,9 @@ decoded signal delta batches. FlatBuffers remains deferred: the current
 generated fixed format meets the C, Dart, and Kotlin compatibility boundary
 without a runtime serialization dependency.
 
-## D-013: bounded local session setup
+## D-013: Bounded Local Session Setup
 
-**Status:** accepted.
+**Status:** Accepted.
 
 The operating system remains the authority for whether a process may connect to
 the Roadcast socket. The daemon reads immutable peer credentials from the
@@ -183,9 +181,9 @@ authorization mechanism. The production UID allowlist, if one is required,
 must be decided after validating the actual app and daemon execution domains on
 an enforcing vehicle.
 
-## D-014: latest-snapshot sampler handoff
+## D-014: Latest-Snapshot Sampler Handoff
 
-**Status:** accepted.
+**Status:** Accepted.
 
 The sampler publishes one latest frame snapshot through a short mutex-protected
 copy, then notifies the libuv loop. It never waits for client queues or socket
@@ -198,18 +196,18 @@ silently discard a completed source read. A ring buffer is unnecessary while
 the product contract promises current state rather than every intermediate
 sample.
 
-## D-015: protocol version 3 exposes uncertainty and directional limits
+## D-015: Protocol Version 3 Exposes Uncertainty and Directional Limits
 
-**Status:** accepted.
+**Status:** Accepted.
 
 Protocol version 3 is an intentional incompatible change. It adds:
 
-- separate maximum request and response payloads in `WELCOME`;
-- explicit `total_count`, `start_index`, and `count` batch metadata;
-- paged raw-frame snapshots;
-- unavailable, never-observed, valid, and invalid observation states;
-- first-observed and last-change monotonic timestamps;
-- effective sampling rate, source state, and handoff coalescing in heartbeats.
+- Separate maximum request and response payloads in `WELCOME`.
+- Explicit `total_count`, `start_index`, and `count` batch metadata.
+- Paged raw-frame snapshots.
+- Unavailable, never-observed, valid, and invalid observation states.
+- First-observed and last-change monotonic timestamps.
+- Effective sampling rate, source state, and handoff coalescing in heartbeats.
 
 The VHAL memory reader exposes storage, not a CAN receive event. Roadcast
 therefore treats the startup bytes as an unobserved baseline. It marks a frame
@@ -224,9 +222,9 @@ delays subscription until a multipage catch-up is required. Successful
 subscription proves catch-up no longer depends on the entire catalog fitting in
 the queue.
 
-## D-016: SELinux Enforcing is a release gate
+## D-016: SELinux Enforcing Is a Release Gate
 
-**Status:** accepted.
+**Status:** Accepted.
 
 Roadcast is required to operate on an SELinux Enforcing vehicle without
 modifying vendor policy. Root UID and a successful `su 0` run on a Permissive
@@ -248,24 +246,24 @@ Permissive runs remain useful for functional, performance, and would-deny AVC
 diagnostics. Roadcast tests must not call `setenforce`, install policy, or alter
 vendor files without explicit authorization for that exact experiment.
 
-## Questoes abertas
+## Open Questions
 
-- formato binario exato e endianness;
-- limites de fila e politica de descarte;
-- production authorization policy beyond peer-credential resource accounting;
-- conditions that would justify replacing schema pages with FlatBuffers;
-- API do SDK C;
-- estrategia de teste sem depender do carro;
-- mecanismo definitivo de instalacao e inicializacao do daemon;
-- quais partes do leitor atual podem ser extraidas sem acoplar Roadcast ao
-  layout interno do `vhalpeek`;
-- whether to expose the 44 transmit buffers and their 580 DWARF-defined signals.
+- Exact binary format and endianness.
+- Queue limits and discard policy.
+- Production authorization policy beyond peer-credential resource accounting.
+- Conditions that would justify replacing schema pages with FlatBuffers.
+- C SDK API.
+- Strategy to test without depending on the vehicle.
+- Definitive mechanism for daemon installation and startup.
+- Which parts of the current reader can be extracted without coupling Roadcast
+  to the internal layout of the VHAL binary.
+- Whether to expose the 44 transmit buffers and their 580 DWARF-defined signals.
   Reading them adds no write path, but the schema must distinguish an observed
   transmit buffer from an observed receive frame, and `kind`/`source` currently
-  cannot express that difference. See `docs/CATALOG_SURFACE.md`;
-- how to represent the 61 percent of already-read frame bits that carry no
+  cannot express that difference. See `docs/CATALOG_SURFACE.md`.
+- How to represent the 61 percent of already-read frame bits that carry no
   DWARF-defined signal. They are only discoverable empirically, so any catalog
   entry for them would have a name Roadcast invented rather than one extracted,
-  which the data-semantics rules otherwise forbid;
-- how to detect that a VHAL update changed or stripped the symbol surface, given
+  which the data-semantics rules otherwise forbid.
+- How to detect that a VHAL update changed or stripped the symbol surface, given
   that the daemon starts successfully when only a subset of buffers resolves.
