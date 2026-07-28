@@ -4878,9 +4878,9 @@
    "width": 13,
    "scale": 1.0,
    "offset": 0.0,
-   "unit": "",
+   "unit": "km/h",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "ESC_RLWheelSpeedInvalid",
@@ -4934,9 +4934,9 @@
    "width": 13,
    "scale": 1.0,
    "offset": 0.0,
-   "unit": "",
+   "unit": "km/h",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "ESC_RRWheelSpeedInvalid",
@@ -7017,23 +7017,23 @@
    "signed": false,
    "calibrated": false
   },
-  {
-   "name": "VCU_ChrgDischrgPwrAct",
-   "canid": "3A2",
-   "parts": [
-    {
-     "word": 4,
-     "off": 24,
-     "bits": 8
-    }
-   ],
-   "width": 8,
-   "scale": 0.1,
-   "offset": -12.8,
-   "unit": "kW",
-   "signed": false,
-   "calibrated": false
-  },
+   {
+    "name": "VCU_ChrgDischrgPwrAct",
+    "canid": "3A2",
+    "parts": [
+     {
+      "word": 4,
+      "off": 24,
+      "bits": 8
+     }
+    ],
+    "width": 8,
+    "scale": 0.1,
+    "offset": -12.8,
+    "unit": "kW",
+    "signed": false,
+    "calibrated": true
+   },
   {
    "name": "VCU_EVDTEodometerDisChg",
    "canid": "3A2",
@@ -7292,50 +7292,50 @@
    "signed": false,
    "calibrated": false
   },
-  {
-   "name": "BMSH_BattCurr",
-   "canid": "250",
-   "parts": [
-    {
-     "word": 0,
-     "off": 24,
-     "bits": 8
-    },
-    {
-     "word": 0,
-     "off": 16,
-     "bits": 6
-    }
-   ],
-   "width": 14,
-   "scale": 1.0,
-   "offset": 0.0,
-   "unit": "",
-   "signed": false,
-   "calibrated": false
-  },
-  {
-   "name": "BMSH_HVBusVolt",
-   "canid": "250",
-   "parts": [
-    {
-     "word": 0,
-     "off": 22,
-     "bits": 2
-    },
-    {
-     "word": 0,
-     "off": 8,
-     "bits": 8
-    }
-   ],
-   "width": 10,
-   "scale": 1.0,
-   "offset": 0.0,
-   "unit": "",
-   "signed": false,
-   "calibrated": false
-  },
+   {
+    "name": "BMSH_BattCurr",
+    "canid": "250",
+    "parts": [
+     {
+      "word": 0,
+      "off": 24,
+      "bits": 8
+     },
+     {
+      "word": 0,
+      "off": 16,
+      "bits": 6
+     }
+    ],
+    "width": 14,
+    "scale": -0.1,
+    "offset": 500.5,
+    "unit": "A",
+    "signed": false,
+    "calibrated": true
+   },
+   {
+    "name": "BMSH_HVBusVolt",
+    "canid": "250",
+    "parts": [
+     {
+      "word": 0,
+      "off": 22,
+      "bits": 2
+     },
+     {
+      "word": 0,
+      "off": 8,
+      "bits": 8
+     }
+    ],
+    "width": 10,
+    "scale": 1.0,
+    "offset": 0.0,
+    "unit": "V",
+    "signed": false,
+    "calibrated": true
+   },
   {
    "name": "BMSH_stMode",
    "canid": "250",
@@ -7460,28 +7460,28 @@
    "signed": false,
    "calibrated": false
   },
-  {
-   "name": "BMSH_ACChgTimeRemain",
-   "canid": "17B",
-   "parts": [
-    {
-     "word": 4,
-     "off": 28,
-     "bits": 4
-    },
-    {
-     "word": 4,
-     "off": 16,
-     "bits": 7
-    }
-   ],
-   "width": 11,
-   "scale": 1.0,
-   "offset": 0.0,
-   "unit": "",
-   "signed": false,
-   "calibrated": false
-  },
+   {
+    "name": "BMSH_ACChgTimeRemain",
+    "canid": "17B",
+    "parts": [
+     {
+      "word": 4,
+      "off": 28,
+      "bits": 4
+     },
+     {
+      "word": 4,
+      "off": 16,
+      "bits": 7
+     }
+    ],
+    "width": 11,
+    "scale": 1.0,
+    "offset": 0.0,
+    "unit": "min",
+    "signed": false,
+    "calibrated": true
+   },
   {
    "name": "BMSH_ThermalOutofControl",
    "canid": "17B",
@@ -13531,72 +13531,72 @@
    "signed": false,
    "calibrated": false
   },
-  {
-   "name": "BMSH_OBC_CellMaxChgVolt",
-   "canid": "211",
-   "parts": [
-    {
-     "word": 0,
-     "off": 16,
-     "bits": 8
-    },
-    {
-     "word": 0,
-     "off": 8,
-     "bits": 1
-    }
-   ],
-   "width": 9,
-   "scale": 1.0,
-   "offset": 0.0,
-   "unit": "",
-   "signed": false,
-   "calibrated": false
-  },
-  {
-   "name": "BMSH_OBC_CellMinDischgVolt",
-   "canid": "211",
-   "parts": [
-    {
-     "word": 0,
-     "off": 9,
-     "bits": 7
-    },
-    {
-     "word": 0,
-     "off": 0,
-     "bits": 2
-    }
-   ],
-   "width": 9,
-   "scale": 1.0,
-   "offset": 0.0,
-   "unit": "",
-   "signed": false,
-   "calibrated": false
-  },
-  {
-   "name": "BMSH_ChargeOutVolSetP",
-   "canid": "211",
-   "parts": [
-    {
-     "word": 0,
-     "off": 2,
-     "bits": 6
-    },
-    {
-     "word": 4,
-     "off": 24,
-     "bits": 8
-    }
-   ],
-   "width": 14,
-   "scale": 1.0,
-   "offset": 0.0,
-   "unit": "",
-   "signed": false,
-   "calibrated": false
-  },
+   {
+    "name": "BMSH_OBC_CellMaxChgVolt",
+    "canid": "211",
+    "parts": [
+     {
+      "word": 0,
+      "off": 16,
+      "bits": 8
+     },
+     {
+      "word": 0,
+      "off": 8,
+      "bits": 1
+     }
+    ],
+    "width": 9,
+    "scale": 0.01,
+    "offset": 0.0,
+    "unit": "V",
+    "signed": false,
+    "calibrated": true
+   },
+   {
+    "name": "BMSH_OBC_CellMinDischgVolt",
+    "canid": "211",
+    "parts": [
+     {
+      "word": 0,
+      "off": 9,
+      "bits": 7
+     },
+     {
+      "word": 0,
+      "off": 0,
+      "bits": 2
+     }
+    ],
+    "width": 9,
+    "scale": 0.01,
+    "offset": 0.0,
+    "unit": "V",
+    "signed": false,
+    "calibrated": true
+   },
+   {
+    "name": "BMSH_ChargeOutVolSetP",
+    "canid": "211",
+    "parts": [
+     {
+      "word": 0,
+      "off": 2,
+      "bits": 6
+     },
+     {
+      "word": 4,
+      "off": 24,
+      "bits": 8
+     }
+    ],
+    "width": 14,
+    "scale": 0.1,
+    "offset": 0.0,
+    "unit": "V",
+    "signed": false,
+    "calibrated": true
+   },
   {
    "name": "BMSH_BookTrvlReq",
    "canid": "211",
@@ -14074,9 +14074,9 @@
    "width": 13,
    "scale": 1.0,
    "offset": 0.0,
-   "unit": "",
+   "unit": "km/h",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "ESC_FLWheelSpeedInvalid",
@@ -14130,9 +14130,9 @@
    "width": 13,
    "scale": 1.0,
    "offset": 0.0,
-   "unit": "",
+   "unit": "km/h",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "ESC_FRWheelSpeedInvalid",
@@ -14303,11 +14303,11 @@
     }
    ],
    "width": 8,
-   "scale": 1.0,
+   "scale": 0.4,
    "offset": 0.0,
-   "unit": "",
+   "unit": "%",
    "signed": false,
-   "calibrated": false,
+   "calibrated": true,
    "invalid_flag": "VCU_AccelPedalPositionInvalid"
   },
   {
