@@ -1,4 +1,4 @@
-# Catalog surface
+# Catalog Surface
 
 This document records what the OEM VHAL binary exposes, how much of it the
 Roadcast catalog covers, and where the remaining unexposed data is. It answers a
@@ -24,7 +24,7 @@ scripts/analyze-vhal-surface.py <path-to-vhal-binary>
 The script exits non-zero when the receive-side surface diverges from the
 catalog, so it doubles as a regression check after a VHAL update.
 
-## Analyzed subject
+## Analyzed Subject
 
 ```text
 file:     android.hardware.automotive.vehicle@2.0-service
@@ -38,7 +38,7 @@ Findings are valid only for this build. An OTA that updates the VHAL invalidates
 every count below, and can also strip the symbol table, which would break source
 discovery entirely rather than merely shifting addresses.
 
-## Finding 1: the receive-side buffer set is complete
+## Finding 1: The Receive-Side Buffer Set Is Complete
 
 The binary exposes exactly 111 `MMI_Rx_XXX` buffer symbols. The diff against the
 catalog is empty in both directions: no buffer is missing from `dbc.json`, and
@@ -50,7 +50,7 @@ an unknown `MMI_Rx_*` symbol would be seen and discarded silently. That blindnes
 is currently harmless because the sets are identical, but it is why this check
 must be run externally rather than inferred from a successful daemon startup.
 
-## Finding 2: buffer geometry confirms three implicit assumptions
+## Finding 2: Buffer Geometry Confirms Three Implicit Assumptions
 
 | Assumption in code | Verified |
 | --- | --- |
@@ -71,21 +71,21 @@ The Rx block ends exactly where the Tx block begins. A single 1240-byte remote
 read covers every buffer, which is cheaper than the 111 separate iovecs the
 sampler builds today.
 
-## Finding 3: the receive-side signal map is also complete
+## Finding 3: The Receive-Side Signal Map Is Also Complete
 
 The binary names per-signal accessors as `ILGetRx_MMI_<CANID>_<Signal>` and
 `ILCheckRx_MMI_<CANID>_<Signal>`. Normalizing those to `(can_id, name)` pairs
 yields 818 receive-side signals, of which 813 are already in the catalog. The
 five remainders belong to frames that are not receive buffers.
 
-Zero missing signals land on a frame Roadcast already reads. The extraction
-inherited from `vhalpeek` is exhaustive with respect to DWARF, and no further
-static extraction will add receive-side signals.
+Zero missing signals land on a frame Roadcast already reads. The extraction is
+exhaustive with respect to DWARF, and no further static extraction will add
+receive-side signals.
 
 Two catalog signals have no corresponding accessor string. They are harmless but
 unexplained; they may come from the calibration overlay rather than from DWARF.
 
-## Finding 4: 61 percent of the bits already being read are unmapped
+## Finding 4: 61 Percent of the Bits Already Being Read Are Unmapped
 
 Across the 111 frames Roadcast reads, only 2741 of 7104 bits are claimed by a
 catalog signal.
@@ -121,7 +121,7 @@ defect: bit-toggle discovery needs per-frame "last changed" timestamps, which is
 the same freshness infrastructure whose absence currently makes the `valid` flag
 mean "symbol resolved" rather than "observed".
 
-## Finding 5: the transmit side is a large, unexploited static reservoir
+## Finding 5: The Transmit Side Is a Large, Unexploited Static Reservoir
 
 The binary exposes 44 `MMI_Tx_XXX` buffers holding what the head unit transmits.
 None of them overlaps the receive catalog, and DWARF defines signals for them
@@ -145,7 +145,7 @@ Twenty further Tx signals reference frame IDs that are not Tx buffers (`0x0E0`,
 these likely use a different mechanism and should be understood before being
 treated as part of the Tx set.
 
-### Reading transmit buffers is still read-only
+### Reading Transmit Buffers Is Still Read-Only
 
 The read-only invariant forbids writing VHAL properties, writing into the VHAL
 process, transmitting CAN frames, and invoking vehicle controls. Reading a
@@ -157,7 +157,7 @@ The distinction is worth stating explicitly because the word "transmit" invites
 the opposite reading. Exposing these buffers adds no write path, and the code
 required is the existing remote-read path pointed at a different address range.
 
-## What this analysis does not establish
+## What This Analysis Does Not Establish
 
 - Whether any transmit signal is physically meaningful or correctly scaled.
   Scale and unit calibration is a separate, empirical problem; the current
@@ -170,7 +170,7 @@ required is the existing remote-read path pointed at a different address range.
   policy. That constraint applies to the entire source path, not to this
   finding specifically.
 
-## Consequences for the roadmap
+## Consequences for the Roadmap
 
 The catalog cannot be grown by looking harder at the receive side. There are
 exactly three ways forward, in increasing cost:

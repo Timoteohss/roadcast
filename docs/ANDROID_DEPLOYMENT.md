@@ -1,16 +1,17 @@
 # Android Deployment
 
 Roadcast does not modify Android system or vendor partitions. The current
-vehicle integration delegates distribution and supervision to the privileged
-GeelyBattery app:
+vehicle integration delegates distribution and supervision to a privileged
+application:
 
-- the APK bundles the ARM64/API 28 `roadcastd` executable;
-- the app compares its SHA-256 hash with `/data/local/tmp/roadcastd`;
-- the app copies the executable only when it is missing or its version changes;
-- the installed executable is `root:root` with mode `0755`;
-- the app starts it through the vehicle's root `adbd`;
-- the app rejects an existing daemon outside `u:r:su:s0`;
-- a foreground-service watchdog restores it after an unexpected exit.
+- The APK bundles the ARM64/API 28 `roadcastd` executable.
+- The application compares its SHA-256 hash with `/data/local/tmp/roadcastd`.
+- The application copies the executable only when it is missing or its version
+  changes.
+- The installed executable is `root:root` with mode `0755`.
+- The application starts it through the vehicle's root `adbd`.
+- The application rejects an existing daemon outside `u:r:su:s0`.
+- A foreground-service watchdog restores it after an unexpected exit.
 
 The installed executable persists across normal app process restarts and
 reboots. It is rewritten only after an APK carrying a different binary is
@@ -18,16 +19,16 @@ installed. Runtime telemetry remains entirely in memory.
 
 ## Lifecycle
 
-On the validated IHU629G:
+On the validated device:
 
-- root `adbd` listens on TCP port 5555;
-- `adbd` runs in `u:r:su:s0`;
-- a new ADB host identity is accepted without user authorization;
-- a shell opened through that connection runs in `u:r:su:s0`.
+- Root `adbd` listens on TCP port 5555.
+- `adbd` runs in `u:r:su:s0`.
+- A new ADB host identity is accepted without user authorization.
+- A shell opened through that connection runs in `u:r:su:s0`.
 
-The `geelybattery` client uses a minimal ADB 1.0.1 host over
-`127.0.0.1:5555`. After `BOOT_COMPLETED`, and whenever its watchdog cannot
-connect to `@roadcast`, it asks `adbd` to execute:
+The client application uses a minimal ADB 1.0.1 host over `127.0.0.1:5555`.
+After `BOOT_COMPLETED`, and whenever its watchdog cannot connect to `@roadcast`,
+it asks `adbd` to execute:
 
 ```bash
 nohup /data/local/tmp/roadcastd \
@@ -36,12 +37,12 @@ nohup /data/local/tmp/roadcastd \
   </dev/null >/dev/null 2>&1 &
 ```
 
-This launcher is vehicle-specific. The app must report an explicit degraded
-state if local ADB is disabled, moved to another port, or starts requiring
-authentication. The launcher requires ADB `shell_v2`: the vehicle's legacy
-`shell:` service kills a detached child when the session closes. Other clients
-remain independent protocol consumers and do not gain permission to manage the
-daemon.
+This launcher is vehicle-specific. The application must report an explicit
+degraded state if local ADB is disabled, moved to another port, or starts
+requiring authentication. The launcher requires ADB `shell_v2`: the vehicle's
+legacy `shell:` service kills a detached child when the session closes. Other
+clients remain independent protocol consumers and do not gain permission to
+manage the daemon.
 
 ## Manual Validation
 
@@ -57,7 +58,7 @@ scripts/install-android.sh --device <head-unit-address>:5555
 This script is for development and recovery. Production distribution is through
 the APK asset.
 
-## GitHub build artifacts
+## GitHub Build Artifacts
 
 The `Build` GitHub Actions workflow cross-compiles the production Android
 ARM64/API 28 artifacts after host tests pass. Normal workflow runs retain the
@@ -73,7 +74,7 @@ SHA256SUMS
 ```
 
 Verify `SHA256SUMS` before copying release binaries into a consumer. The
-GeelyBattery repository uses `scripts/update_roadcast_client.sh` to install the
+application repository uses `scripts/update_roadcast_client.sh` to install the
 selected daemon and client library into its APK source tree.
 
 ## Security Boundary

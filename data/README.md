@@ -1,11 +1,10 @@
-# CAN catalog source
+# CAN Catalog Source
 
 `dbc.json` is the checked-in source for Roadcast's initial raw CAN catalog. It
-contains bit layouts extracted from DWARF in the OEM VHAL binary and the small
-calibration overlay maintained by the sibling `vhalpeek` project.
+contains bit layouts extracted from DWARF in the OEM VHAL binary and a small
+calibration overlay.
 
-It was imported from `data/dbc.json` in the sibling `vhalpeek` checkout, using
-the state present on 2026-07-26:
+The catalog was validated on 2026-07-26:
 
 ```text
 frames: 111

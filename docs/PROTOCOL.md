@@ -1,65 +1,65 @@
-# Protocolo Roadcast
+# Protocol
 
-## Estado do documento
+## Document Status
 
-Este documento define a direcao inicial. Valores numericos, layouts C e nomes de
-mensagens ainda nao sao contrato estavel.
+This document defines the initial direction. Numeric values, C layouts, and
+message names are not yet a stable contract.
 
-## Objetivos
+## Objectives
 
-O protocolo deve:
+The protocol must:
 
-- funcionar sobre socket Unix abstrato;
-- aceitar multiplos clientes simultaneos;
-- ser implementavel sem SDK especifico;
-- usar framing binario inequivoco;
-- permitir descoberta de todos os sinais;
-- transmitir snapshot completo e atualizacoes incrementais;
-- detectar incompatibilidade e perda de mensagens;
-- permitir extensao sem quebrar clientes antigos.
+- Work over an abstract Unix socket.
+- Accept multiple simultaneous clients.
+- Be implementable without a specific SDK.
+- Use unambiguous binary framing.
+- Allow discovery of all signals.
+- Transmit complete snapshots and incremental updates.
+- Detect incompatibility and message loss.
+- Allow extension without breaking old clients.
 
-## Separacao de versoes
+## Version Separation
 
-Tres numeros nao devem ser confundidos:
+Three numbers must not be confused:
 
-- **protocol version:** framing, mensagens e semantica da conexao;
-- **schema version/hash:** catalogo e ordem das entradas;
-- **daemon version:** versao da implementacao Roadcast.
+- **Protocol version:** Framing, messages, and connection semantics.
+- **Schema version/hash:** Catalog and entry order.
+- **Daemon version:** Roadcast implementation version.
 
-Atualizar o catalogo nao implica necessariamente atualizar o protocolo.
+Updating the catalog does not necessarily require updating the protocol.
 
-## Sessao inicial
+## Initial Session
 
 Protocol version 3 session flow:
 
 ```text
 client                              roadcastd
-  │                                    │
-  ├── HELLO protocol=[2..2] ──────────►│
-  │◄─ WELCOME protocol=2 capabilities ─┤
-  │                                    │
-  ├── GET_SCHEMA start=0 ─────────────►│
-  │◄─ SCHEMA_CHUNK start=0 count=N ────┤
-  ├── GET_SCHEMA start=N ─────────────►│
-  │◄─ SCHEMA_CHUNK ... ────────────────┤
-  │                                    │
-  ├── GET_SNAPSHOT start=0 ───────────►│
-  │◄─ SNAPSHOT start=0 count=N ────────┤
-  ├── GET_SNAPSHOT start=N ───────────►│
-  │◄─ SNAPSHOT ... ────────────────────┤
-  ├── GET_SIGNAL_SNAPSHOT start=0 ────►│
-  │◄─ SIGNAL_SNAPSHOT_CHUNK ───────────┤
-  ├── GET_SIGNAL_SNAPSHOT ... ────────►│
-  │◄─ SIGNAL_SNAPSHOT_CHUNK ... ───────┤
-  │                                    │
-  ├── SUBSCRIBE_ALL ──────────────────►│
-  │◄─ UPDATE_BATCH catch-up ───────────┤
-  │◄─ SIGNAL_UPDATE_BATCH catch-up ────┤
-  │◄─ SUBSCRIBED ──────────────────────┤
-  │◄─ UPDATE_BATCH ────────────────────┤
-  │◄─ SIGNAL_UPDATE_BATCH ─────────────┤
-  │◄─ UPDATE_BATCH ────────────────────┤
-  │◄─ HEARTBEAT ───────────────────────┤
+  |                                    |
+  +-- HELLO protocol=[2..2] --------->|
+  |<-- WELCOME protocol=2 capabilities -|
+  |                                    |
+  +-- GET_SCHEMA start=0 ------------>|
+  |<-- SCHEMA_CHUNK start=0 count=N ---|
+  +-- GET_SCHEMA start=N ------------>|
+  |<-- SCHEMA_CHUNK ... ---------------|
+  |                                    |
+  +-- GET_SNAPSHOT start=0 ---------->|
+  |<-- SNAPSHOT start=0 count=N -------|
+  +-- GET_SNAPSHOT start=N ---------->|
+  |<-- SNAPSHOT ... -------------------|
+  +-- GET_SIGNAL_SNAPSHOT start=0 --->|
+  |<-- SIGNAL_SNAPSHOT_CHUNK ----------|
+  +-- GET_SIGNAL_SNAPSHOT ... -------->|
+  |<-- SIGNAL_SNAPSHOT_CHUNK ... ------|
+  |                                    |
+  +-- SUBSCRIBE_ALL ----------------->|
+  |<-- UPDATE_BATCH catch-up ----------|
+  |<-- SIGNAL_UPDATE_BATCH catch-up ---|
+  |<-- SUBSCRIBED ---------------------|
+  |<-- UPDATE_BATCH -------------------|
+  |<-- SIGNAL_UPDATE_BATCH ------------|
+  |<-- UPDATE_BATCH -------------------|
+  |<-- HEARTBEAT ----------------------|
 ```
 
 Raw-frame, schema, and decoded-signal snapshots are pulled by index. Each
@@ -74,7 +74,7 @@ stream order.
 
 ## Framing
 
-Cabecalho conceitual:
+Conceptual header:
 
 ```c
 struct roadcast_message_header {
@@ -100,14 +100,13 @@ Protocol version 3 encodes the 32-byte header in network byte order:
 | 16 | 8 | change sequence |
 | 24 | 8 | monotonic sample timestamp in nanoseconds |
 
-Requisitos:
+Requirements:
 
-- inteiros possuem endianness definida pelo protocolo;
-- `payload_bytes` nao inclui o cabecalho;
-- tamanho maximo de mensagem e anunciado no handshake;
-- mensagens desconhecidas podem ser ignoradas somente quando marcadas como
-  opcionais;
-- payload malformado encerra apenas a sessao do cliente.
+- Integers have endianness defined by the protocol.
+- `payload_bytes` does not include the header.
+- Maximum message size is announced in the handshake.
+- Unknown messages can be ignored only when marked as optional.
+- Malformed payload terminates only the client session.
 
 The framing header and high-frequency delta records are native Roadcast wire
 types, not FlatBuffers or Protocol Buffers envelopes. Their serialized layout
@@ -119,8 +118,8 @@ clients to link libuv. libuv is a daemon implementation detail.
 
 `WELCOME` announces two directional limits:
 
-- `max_request_payload`: the largest payload the daemon input buffer accepts;
-- `max_response_payload`: the largest payload the daemon will emit.
+- `max_request_payload`: The largest payload the daemon input buffer accepts.
+- `max_response_payload`: The largest payload the daemon will emit.
 
 The current daemon announces 4064 and 2016 bytes respectively. These are
 transport limits, not permission to use arbitrary payload sizes: each command
@@ -142,9 +141,9 @@ sequence.
 
 ## Schema
 
-Cada entrada do catalogo precisa descrever sua identidade e procedencia.
+Each catalog entry must describe its identity and provenance.
 
-Campos conceituais:
+Conceptual fields:
 
 ```text
 stable_id
@@ -160,11 +159,11 @@ scale
 offset
 calibrated
 update_mode
-source_address       CAN id, property id/area ou equivalente
+source_address       CAN id, property id/area, or equivalent
 ```
 
-O schema deve permitir representar informacao desconhecida sem inventar valores.
-Por exemplo, unidade ausente e diferente de unidade vazia confirmada.
+The schema must represent unknown information without inventing values. For
+example, absent unit is different from confirmed empty unit.
 
 Protocol version 3 uses an explicitly versioned generated binary schema. Each
 entry carries stable ID, index, invalid-signal index, CAN ID, kind, source,
@@ -173,39 +172,39 @@ width, signed/calibrated flags, scale, offset, name, and unit.
 FlatBuffers remains a possible future encoding for schema and control payloads.
 It is not used by protocol version 3 and will not wrap telemetry deltas.
 
-## IDs e indices
+## IDs and Indices
 
-`stable_id` identifica semanticamente uma entrada entre schemas compativeis.
-`index` e apenas a posicao compacta no snapshot atual.
+`stable_id` identifies an entry semantically across compatible schemas. `index`
+is only the compact position in the current snapshot.
 
-Clientes usam indices no caminho quente, mas devem invalida-los quando o hash do
-schema mudar.
+Clients use indices on the hot path, but must invalidate them when the schema
+hash changes.
 
-CAN signal IDs use FNV-1a 64 over the versioned namespace, big-endian 16-bit CAN
-ID, and UTF-8 signal name. The schema hash additionally covers numeric
+CAN signal IDs use FNV-1a 64 over the versioned namespace, big-endian 16-bit
+CAN ID, and UTF-8 signal name. The schema hash additionally covers numeric
 interpretation and bit layout.
 
-O schema tambem distingue:
+The schema also distinguishes:
 
-- `kind`: frame CAN, sinal CAN decodificado ou VHAL property;
-- `source`: mecanismo tecnico pelo qual o Roadcast obteve o dado;
-- `domain`: produtor ou agrupamento semantico inferido, como PEPS, BCM ou BMSH.
+- `kind`: Raw CAN frame, decoded CAN signal, or VHAL property.
+- `source`: Technical mechanism by which Roadcast obtained the data.
+- `domain`: Inferred producer or semantic grouping, such as PEPS, BCM, or BMSH.
 
-`domain` nao substitui `source`: um valor PEPS pode aparecer tanto como sinal CAN
-quanto como property republicada pelo VHAL.
+`domain` does not replace `source`: a PEPS value can appear as a CAN signal
+and as a property republished by the VHAL.
 
 ## Snapshot
 
-O snapshot representa o estado completo conhecido em uma sequencia especifica.
+The snapshot represents the complete known state at a specific sequence.
 
-Cada valor deve distinguir:
+Each value must distinguish:
 
-- nunca observado;
-- observado e invalido;
-- observado e valido;
-- cru disponivel, fisico desconhecido;
-- fisico calculado com escala estimada;
-- fisico calculado com escala calibrada.
+- Never observed.
+- Observed and invalid.
+- Observed and valid.
+- Raw available, physical unknown.
+- Physical calculated with estimated scale.
+- Physical calculated with calibrated scale.
 
 Decoded CAN values contain a 64-bit raw value, an IEEE-754 binary64 physical
 value, first-observed and last-change monotonic timestamps, an observation
@@ -229,47 +228,47 @@ entire daemon lifetime honestly remains `never observed`.
 `calibrated` describes whether scale, offset, and unit are confirmed. It is
 independent from observation validity.
 
-## Atualizacoes
+## Updates
 
-Um `UPDATE_BATCH` contem todas as entradas alteradas em um ciclo ou em uma
-pequena janela de agregacao.
+An `UPDATE_BATCH` contains all entries changed in a cycle or in a small
+aggregation window.
 
-O servidor nao promete entregar todo estado intermediario para um cliente lento.
-Ele promete:
+The server does not promise to deliver every intermediate state to a slow
+client. It promises:
 
-- preservar o estado mais recente;
-- sinalizar perda de continuidade;
-- permitir nova sincronizacao;
-- nunca bloquear o sampler por causa do cliente.
+- Preserve the most recent state.
+- Signal loss of continuity.
+- Allow resynchronization.
+- Never block the sampler because of the client.
 
-Clientes que precisem registrar cada transicao deverao negociar uma capacidade
-especifica, com limites de memoria claramente anunciados.
+Clients that need to record every transition must negotiate a specific
+capability with clearly announced memory limits.
 
-O protocolo inicial envia todos os deltas e deixa filtragem por `kind`, `source`
-ou `domain` para o cliente. Filtros server-side sao uma extensao futura, nao uma
-condicao para expor o catalogo completo.
+The initial protocol sends all deltas and leaves filtering by `kind`, `source`,
+or `domain` to the client. Server-side filters are a future extension, not a
+condition to expose the complete catalog.
 
 ## Heartbeat
 
 Heartbeats exist even when no signal changes. Protocol version 3 carries:
 
-- latest sample sequence;
-- latest change sequence, equal to the header sequence;
-- batches dropped for this client;
-- sampler observations coalesced by the event-loop handoff;
-- effective recent sampling frequency in milliHertz;
-- source state: unavailable, available, or degraded fallback.
+- Latest sample sequence.
+- Latest change sequence, equal to the header sequence.
+- Batches dropped for this client.
+- Sampler observations coalesced by the event-loop handoff.
+- Effective recent sampling frequency in milliHertz.
+- Source state: unavailable, available, or degraded fallback.
 
 The header timestamp is the monotonic timestamp of the latest source sample.
 
-Assim, valor parado nao e confundido com daemon morto.
+This way, a stopped value is not confused with a dead daemon.
 
-## Memoria compartilhada opcional
+## Optional Shared Memory
 
-O protocolo podera anunciar um fast path por memoria compartilhada. Ele deve ser
-opcional: todo dado e toda operacao de controle precisam continuar acessiveis
-pelo transporte base.
+The protocol may announce a fast path through shared memory. It must be
+optional: all data and all control operations must remain accessible through
+the base transport.
 
-Se implementado sem politica SELinux dedicada, cada fd fornecido por um cliente
-representara uma view exclusiva daquele cliente. Ele nunca substituira o
-snapshot canonico ou o buffer de outro consumidor.
+If implemented without a dedicated SELinux policy, each fd provided by a client
+represents an exclusive view for that client. It never replaces the canonical
+snapshot or the buffer of another consumer.

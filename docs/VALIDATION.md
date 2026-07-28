@@ -3,7 +3,7 @@
 This document records meaningful host and vehicle validation runs. Runtime
 telemetry is not persisted on the vehicle.
 
-## 2026-07-26: first raw CAN tracer
+## 2026-07-26: First Raw CAN Tracer
 
 ### Scope
 
@@ -15,9 +15,9 @@ OEM VHAL memory -> 60 Hz sampler -> libuv -> @roadcast-test
 ```
 
 The test used unique temporary binary and socket names. It did not stop or
-replace the existing `vhalpeek` process.
+replace any existing process.
 
-### Target state
+### Target State
 
 ```text
 device: IHU629G
@@ -25,7 +25,6 @@ Android: 9
 architecture: ARM64
 VHAL PID: 295
 SELinux observed state: Permissive
-existing vhalpeek PID: 29245
 ```
 
 Roadcast did not change SELinux state, restart the device, stop the VHAL, or
@@ -87,9 +86,9 @@ approximately 60 per second independently of the batch rate.
 Both clients disconnected independently. The daemon was then stopped and both
 temporary executables were removed from `/data/local/tmp`.
 
-## 2026-07-26: protocol version 3 permissive diagnostic
+## 2026-07-26: Protocol Version 3 Permissive Diagnostic
 
-### Scope and limitation
+### Scope and Limitation
 
 This run exercised the current version 3 path:
 
@@ -106,7 +105,7 @@ release gate and must use the intended production launch domain.
 Roadcast did not call `setenforce`, change policy, reboot, stop the VHAL, or
 modify vendor files.
 
-### Target and build
+### Target and Build
 
 ```text
 device: IHU629G
@@ -152,17 +151,16 @@ A process sample while both clients were connected reported two threads,
 4712 KiB RSS, 12332 KiB virtual size, and 3.3% CPU in that `top` interval.
 
 No AVC entry matching the Roadcast process, PID, VHAL, `process_vm_readv`, or
-`/proc/PID/mem` appeared in the captured denial tail. The tail did contain
-pre-existing permissive denials for the old geelybattery memfd experiment and a
-`su` setuid operation. Absence of a matching permissive AVC is useful evidence,
-but it is not a substitute for an Enforcing run.
+`/proc/PID/mem` appeared in the captured denial tail. Absence of a matching
+permissive AVC is useful evidence, but it is not a substitute for an Enforcing
+run.
 
 The daemon was terminated normally and both uniquely named test binaries were
 removed from `/data/local/tmp`.
 
-## 2026-07-26: protocol version 3 under SELinux Enforcing
+## 2026-07-26: Protocol Version 3 Under SELinux Enforcing
 
-### Safety controls
+### Safety Controls
 
 This was an explicitly authorized transient Enforcing test. Before changing
 state, a root watchdog shell was started to restore `Permissive` after 25
@@ -206,7 +204,7 @@ The client exited successfully. The relevant kernel denial query returned no
 AVC entry for Roadcast, the VHAL, remote memory access, or the test PID while
 Enforcing was active.
 
-### What this proves
+### What This Proves
 
 This proves that the current source discovery, `process_vm_readv` acquisition,
 protocol version 3 server, and abstract-socket client path work under Enforcing
@@ -220,7 +218,7 @@ boundaries remain part of the production installation test.
 The daemon was terminated, both uniquely named binaries were removed from
 `/data/local/tmp`, and no Roadcast test process remained.
 
-## Host validation
+## Host Validation
 
 `make test` validates explicit wire encoding, handshake payloads, frame batches,
 reserved fields, directional payload limits, page metadata, observation states
@@ -229,19 +227,19 @@ and timestamps, capacity limits, truncation, and version 3 heartbeat payloads.
 `make integration` starts a high-load 240 Hz fake source over a temporary
 filesystem Unix socket. It verifies:
 
-- sixteen idle pre-HELLO connections cannot deny service after the two-second
-  handshake deadline;
-- malformed headers, oversized payload declarations, reserved flags, commands
+- Sixteen idle pre-HELLO connections cannot deny service after the two-second
+  handshake deadline.
+- Malformed headers, oversized payload declarations, reserved flags, commands
   out of order, duplicate HELLO messages, random bytes, and a byte-fragmented
-  HELLO remain isolated to their sessions;
-- two clients receive complete snapshots and continuous delta streams without
-  sequence gaps while another client stops reading;
-- the 111-frame snapshot is retrieved as multiple bounded pages;
-- decoded fake-source updates are observed/valid and carry non-zero
-  first-observed and last-change timestamps;
-- a dedicated one-slot session pauses and resumes a multipage subscription
-  catch-up before receiving `SUBSCRIBED`;
-- a paused client overflows its bounded queue, receives `RESYNC_REQUIRED`,
+  HELLO remain isolated to their sessions.
+- Two clients receive complete snapshots and continuous delta streams without
+  sequence gaps while another client stops reading.
+- The 111-frame snapshot is retrieved as multiple bounded pages.
+- Decoded fake-source updates are observed/valid and carry non-zero
+  first-observed and last-change timestamps.
+- A dedicated one-slot session pauses and resumes a multipage subscription
+  catch-up before receiving `SUBSCRIBED`.
+- A paused client overflows its bounded queue, receives `RESYNC_REQUIRED`,
   retrieves a new consistent snapshot, subscribes again, and resumes with zero
   sequence gaps after recovery.
 
@@ -259,6 +257,6 @@ daemon reports the number of intermediate samples represented by a newer
 published snapshot as `coalesced`.
 
 The same suite passes with UndefinedBehaviorSanitizer enabled. AddressSanitizer
-could not be evaluated on the current macOS 26.5 host because the Clang ASan
+could not be evaluated on the current macOS host because the Clang ASan
 runtime deadlocked inside `AsanInitInternal` before entering the test program's
 `main()`.
