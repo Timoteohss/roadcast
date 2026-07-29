@@ -8,6 +8,12 @@ schema. A release line names all three.
 
 ## Unreleased
 
+### Added
+
+- GitHub Actions now publishes `RELEASE_MANIFEST.json` with Android target,
+  protocol/schema compatibility, source commit, and hashes for the daemon,
+  CLI, and shared client library.
+
 ### Changed
 
 - Calibrated charger AC input measurements: `OBC_uInAct` reports voltage in

@@ -90,6 +90,20 @@ jobs:
           install -m 0755 "$output/roadcastd" dist/roadcastd
           install -m 0755 "$output/roadcastctl" dist/roadcastctl
           install -m 0755 "$output/libroadcast_client.so" dist/libroadcast_client.so
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            release_tag=edge
+          else
+            release_tag=ci
+          fi
+          scripts/generate-release-manifest.py \
+            --dist dist \
+            --output dist/RELEASE_MANIFEST.json \
+            --release-tag "$release_tag" \
+            --commit "$GITHUB_SHA" \
+            --abi "$ANDROID_ABI" \
+            --min-android-api "$ANDROID_API"
           (
             cd dist
             sha256sum roadcastd roadcastctl libroadcast_client.so > SHA256SUMS

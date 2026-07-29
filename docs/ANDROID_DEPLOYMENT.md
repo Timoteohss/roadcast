@@ -71,11 +71,25 @@ roadcastd
 roadcastctl
 libroadcast_client.so
 SHA256SUMS
+RELEASE_MANIFEST.json
 ```
 
 Verify `SHA256SUMS` before copying release binaries into a consumer. The
 application repository uses `scripts/update_roadcast_client.sh` to install the
 selected daemon and client library into its APK source tree.
+
+`RELEASE_MANIFEST.json` is the machine-readable update contract for consumers.
+It records the release tag and commit, Android ABI/API requirements, protocol
+and schema compatibility, and the SHA-256 and byte size of every Android
+artifact. Values for the protocol and schema versions are read directly from
+the public C headers during the build. Versioned tags expose their version
+without the leading `v`; builds from `main` use the rolling `edge` version and
+pull-request artifacts use `ci`.
+
+The manifest is integrity metadata published through the same GitHub Release as
+the binaries. It is not a cryptographic signature and does not provide an
+independent authenticity boundary if the repository or release credentials are
+compromised.
 
 ## Security Boundary
 
