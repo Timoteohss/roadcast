@@ -97,6 +97,49 @@ static void test_calibrated_drive_power(void) {
     assert(values[drive_power].calibrated == 1);
 }
 
+static void test_calibrated_obc_input_voltage(void) {
+    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
+    initialize_frames(frames);
+
+    uint32_t input_voltage = find_signal(0x221, "OBC_uInAct");
+    assert(input_voltage != UINT32_MAX);
+    assert(ROADCAST_SIGNALS[input_voltage].calibrated == 1);
+    assert(ROADCAST_SIGNALS[input_voltage].scale == 0.1);
+    assert(ROADCAST_SIGNALS[input_voltage].offset == 0.0);
+    assert(strcmp(ROADCAST_SIGNALS[input_voltage].unit, "V") == 0);
+
+    uint16_t frame_index = ROADCAST_SIGNALS[input_voltage].frame_index;
+    frames[frame_index].data[5] = 8;
+    frames[frame_index].data[6] = 157;
+    roadcast_decode_signals(frames, values);
+    assert(values[input_voltage].raw == 2205);
+    assert(values[input_voltage].physical == 220.5);
+    assert(values[input_voltage].calibrated == 1);
+}
+
+static void test_calibrated_obc_input_current(void) {
+    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
+    initialize_frames(frames);
+
+    uint32_t input_current = find_signal(0x221, "OBC_iInAct");
+    assert(input_current != UINT32_MAX);
+    assert(ROADCAST_SIGNALS[input_current].calibrated == 1);
+    assert(ROADCAST_SIGNALS[input_current].scale == 0.1);
+    assert(ROADCAST_SIGNALS[input_current].offset == 0.0);
+    assert(strcmp(ROADCAST_SIGNALS[input_current].unit, "A") == 0);
+
+    uint16_t frame_index = ROADCAST_SIGNALS[input_current].frame_index;
+    frames[frame_index].data[4] = 255;
+    frames[frame_index].data[5] = 192;
+    roadcast_decode_signals(frames, values);
+    assert(values[input_current].raw == 1023);
+    assert(values[input_current].physical > 102.29);
+    assert(values[input_current].physical < 102.31);
+    assert(values[input_current].calibrated == 1);
+}
+
 static void test_64_bit_signal(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
@@ -155,6 +198,8 @@ int main(void) {
     test_catalog_identity();
     test_decoding_and_invalid_flag();
     test_calibrated_drive_power();
+    test_calibrated_obc_input_voltage();
+    test_calibrated_obc_input_current();
     test_64_bit_signal();
     test_signed_63_bit_conversion();
     test_schema_round_trip();

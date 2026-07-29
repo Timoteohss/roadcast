@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Roadcast versions the daemon separately from the wire protocol and the catalog
 schema. A release line names all three.
 
+## Unreleased
+
+### Changed
+
+- Calibrated charger AC input measurements: `OBC_uInAct` reports voltage in
+  `V`, and `OBC_iInAct` reports current in `A`; both use `scale=0.1` and
+  `offset=0`. For example, `OBC_uInAct` raw value `2205` reports `220.5 V`.
+
 ## [0.1.0] - 2026-07-27
 
 First public pre-release. Protocol version 3, schema version 1.
