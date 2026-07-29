@@ -7610,11 +7610,11 @@
     }
    ],
    "width": 10,
-   "scale": 1.0,
+   "scale": 0.1,
    "offset": 0.0,
-   "unit": "",
+   "unit": "A",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "OBC_uInAct",
@@ -7632,11 +7632,11 @@
     }
    ],
    "width": 13,
-   "scale": 1.0,
+   "scale": 0.1,
    "offset": 0.0,
-   "unit": "",
+   "unit": "V",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "OBC_TotDischTime",
