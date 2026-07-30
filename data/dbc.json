@@ -1611,9 +1611,9 @@
    "width": 13,
    "scale": 1.0,
    "offset": 0.0,
-   "unit": "",
+   "unit": "km/h",
    "signed": false,
-   "calibrated": false,
+   "calibrated": true,
    "invalid_flag": "ESC_VehicleSpeedInvalid"
   },
   {

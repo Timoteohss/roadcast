@@ -818,7 +818,7 @@ static const roadcast_signal_part_t SIGNAL_PARTS_812[] = {{4, 24, 8}};
 static const roadcast_signal_part_t SIGNAL_PARTS_813[] = {{0, 24, 8}, {0, 16, 8}, {0, 8, 8}, {0, 0, 8}, {4, 24, 8}, {4, 16, 8}, {4, 8, 8}, {4, 0, 8}};
 static const roadcast_signal_part_t SIGNAL_PARTS_814[] = {{0, 24, 8}, {0, 16, 8}, {0, 8, 8}, {0, 0, 8}, {4, 24, 8}, {4, 16, 8}, {4, 8, 8}, {4, 0, 8}};
 
-const uint64_t ROADCAST_CAN_SCHEMA_HASH = UINT64_C(0xf8db8ab0f49a0a7f);
+const uint64_t ROADCAST_CAN_SCHEMA_HASH = UINT64_C(0xb53427c77ab864f9);
 
 const roadcast_signal_definition_t
     ROADCAST_SIGNALS[ROADCAST_SIGNAL_COUNT] = {
@@ -2115,7 +2115,7 @@ const roadcast_signal_definition_t
         {
             .stable_id = UINT64_C(0xcb230ca06ce15d68),
             .name = "ESC_VehicleSpeed",
-            .unit = "",
+            .unit = "km/h",
             .parts = SIGNAL_PARTS_86,
             .invalid_signal_index = UINT32_C(88),
             .can_id = UINT16_C(0x125),
@@ -2123,7 +2123,7 @@ const roadcast_signal_definition_t
             .part_count = UINT8_C(2),
             .width = UINT8_C(13),
             .is_signed = UINT8_C(0),
-            .calibrated = UINT8_C(0),
+            .calibrated = UINT8_C(1),
             .scale = 1,
             .offset = 0,
         },
