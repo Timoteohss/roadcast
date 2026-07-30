@@ -140,6 +140,27 @@ static void test_calibrated_obc_input_current(void) {
     assert(values[input_current].calibrated == 1);
 }
 
+static void test_calibrated_vehicle_speed(void) {
+    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
+    initialize_frames(frames);
+
+    uint32_t vehicle_speed = find_signal(0x125, "ESC_VehicleSpeed");
+    assert(vehicle_speed != UINT32_MAX);
+    assert(ROADCAST_SIGNALS[vehicle_speed].calibrated == 1);
+    assert(ROADCAST_SIGNALS[vehicle_speed].scale == 1.0);
+    assert(ROADCAST_SIGNALS[vehicle_speed].offset == 0.0);
+    assert(strcmp(ROADCAST_SIGNALS[vehicle_speed].unit, "km/h") == 0);
+
+    uint16_t frame_index = ROADCAST_SIGNALS[vehicle_speed].frame_index;
+    frames[frame_index].data[1] = 3;
+    frames[frame_index].data[2] = 32;
+    roadcast_decode_signals(frames, values);
+    assert(values[vehicle_speed].raw == 100);
+    assert(values[vehicle_speed].physical == 100.0);
+    assert(values[vehicle_speed].calibrated == 1);
+}
+
 static void test_64_bit_signal(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
@@ -200,6 +221,7 @@ int main(void) {
     test_calibrated_drive_power();
     test_calibrated_obc_input_voltage();
     test_calibrated_obc_input_current();
+    test_calibrated_vehicle_speed();
     test_64_bit_signal();
     test_signed_63_bit_conversion();
     test_schema_round_trip();
