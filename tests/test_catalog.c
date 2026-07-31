@@ -161,6 +161,39 @@ static void test_calibrated_vehicle_speed(void) {
     assert(values[vehicle_speed].calibrated == 1);
 }
 
+static void test_calibrated_road_inclination(void) {
+    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
+    initialize_frames(frames);
+
+    uint32_t road_inclination = find_signal(0x128, "ESC_RoadInclnRoadIncln");
+    assert(road_inclination != UINT32_MAX);
+    assert(ROADCAST_SIGNALS[road_inclination].calibrated == 1);
+    assert(ROADCAST_SIGNALS[road_inclination].scale == -0.1);
+    assert(ROADCAST_SIGNALS[road_inclination].offset == 100.0);
+    assert(strcmp(ROADCAST_SIGNALS[road_inclination].unit, "deg") == 0);
+
+    uint16_t frame_index = ROADCAST_SIGNALS[road_inclination].frame_index;
+    frames[frame_index].data[4] = 125;
+    roadcast_decode_signals(frames, values);
+    assert(values[road_inclination].raw == 1000);
+    assert(values[road_inclination].physical > -0.001);
+    assert(values[road_inclination].physical < 0.001);
+
+    frames[frame_index].data[4] = 100;
+    roadcast_decode_signals(frames, values);
+    assert(values[road_inclination].raw == 800);
+    assert(values[road_inclination].physical > 19.999);
+    assert(values[road_inclination].physical < 20.001);
+
+    frames[frame_index].data[4] = 150;
+    roadcast_decode_signals(frames, values);
+    assert(values[road_inclination].raw == 1200);
+    assert(values[road_inclination].physical > -20.001);
+    assert(values[road_inclination].physical < -19.999);
+    assert(values[road_inclination].calibrated == 1);
+}
+
 static void test_64_bit_signal(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
@@ -222,6 +255,7 @@ int main(void) {
     test_calibrated_obc_input_voltage();
     test_calibrated_obc_input_current();
     test_calibrated_vehicle_speed();
+    test_calibrated_road_inclination();
     test_64_bit_signal();
     test_signed_63_bit_conversion();
     test_schema_round_trip();
