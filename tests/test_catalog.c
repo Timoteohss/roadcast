@@ -82,21 +82,6 @@ static void test_decoding_and_invalid_flag(void) {
     assert(values[ambient].state == ROADCAST_OBSERVATION_UNAVAILABLE);
 }
 
-static void test_calibrated_drive_power(void) {
-    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
-    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
-    initialize_frames(frames);
-
-    uint32_t drive_power = find_signal(0x315, "VCU_DrvPwrAct");
-    assert(drive_power != UINT32_MAX);
-    assert(ROADCAST_SIGNALS[drive_power].calibrated == 1);
-    assert(ROADCAST_SIGNALS[drive_power].scale == 0.1);
-    assert(ROADCAST_SIGNALS[drive_power].offset == -204.8);
-
-    roadcast_decode_signals(frames, values);
-    assert(values[drive_power].calibrated == 1);
-}
-
 static void test_calibrated_obc_input_voltage(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
@@ -194,6 +179,55 @@ static void test_calibrated_road_inclination(void) {
     assert(values[road_inclination].calibrated == 1);
 }
 
+/*
+ * The zero of VCU_DrvPwrAct sits at raw 2040, not at the 2048 the field width
+ * suggests. 1354 frames recorded with the car stopped, where traction power is
+ * zero by definition, put the mode at raw 2040 (596 frames) with +-3 counts of
+ * jitter and nothing near 2048; the median does not move between 14 C and 31 C,
+ * so it is the zero point and not a climate or 12 V load. An offset of -204.8
+ * therefore reported -0.8 kW on a parked car, a permanent bias worth 0.27 kWh
+ * over a 20-minute trip.
+ */
+static void test_calibrated_drive_power(void) {
+    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
+    initialize_frames(frames);
+
+    uint32_t drive_power = find_signal(0x315, "VCU_DrvPwrAct");
+    assert(drive_power != UINT32_MAX);
+    assert(ROADCAST_SIGNALS[drive_power].calibrated == 1);
+    assert(ROADCAST_SIGNALS[drive_power].scale == 0.1);
+    assert(ROADCAST_SIGNALS[drive_power].offset == -204.0);
+    assert(strcmp(ROADCAST_SIGNALS[drive_power].unit, "kW") == 0);
+
+    uint16_t frame_index = ROADCAST_SIGNALS[drive_power].frame_index;
+
+    /* Observed resting count of a stopped car. */
+    frames[frame_index].data[1] = 0x07;
+    frames[frame_index].data[2] = 0xf8;
+    roadcast_decode_signals(frames, values);
+    assert(values[drive_power].raw == 2040);
+    assert(values[drive_power].physical > -0.001);
+    assert(values[drive_power].physical < 0.001);
+
+    /* Traction: 50 kW of discharge. */
+    frames[frame_index].data[1] = 0x09;
+    frames[frame_index].data[2] = 0xec;
+    roadcast_decode_signals(frames, values);
+    assert(values[drive_power].raw == 2540);
+    assert(values[drive_power].physical > 49.999);
+    assert(values[drive_power].physical < 50.001);
+
+    /* Regeneration: 20 kW back into the pack. */
+    frames[frame_index].data[1] = 0x07;
+    frames[frame_index].data[2] = 0x30;
+    roadcast_decode_signals(frames, values);
+    assert(values[drive_power].raw == 1840);
+    assert(values[drive_power].physical > -20.001);
+    assert(values[drive_power].physical < -19.999);
+    assert(values[drive_power].calibrated == 1);
+}
+
 static void test_64_bit_signal(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
@@ -251,11 +285,11 @@ static void test_schema_round_trip(void) {
 int main(void) {
     test_catalog_identity();
     test_decoding_and_invalid_flag();
-    test_calibrated_drive_power();
     test_calibrated_obc_input_voltage();
     test_calibrated_obc_input_current();
     test_calibrated_vehicle_speed();
     test_calibrated_road_inclination();
+    test_calibrated_drive_power();
     test_64_bit_signal();
     test_signed_63_bit_conversion();
     test_schema_round_trip();

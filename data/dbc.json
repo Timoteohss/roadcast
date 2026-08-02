@@ -7095,7 +7095,7 @@
    ],
    "width": 12,
    "scale": 0.1,
-   "offset": -204.8,
+   "offset": -204.0,
    "unit": "kW",
    "signed": false,
    "calibrated": true
