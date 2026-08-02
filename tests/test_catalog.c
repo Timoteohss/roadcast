@@ -228,6 +228,61 @@ static void test_calibrated_drive_power(void) {
     assert(values[drive_power].calibrated == 1);
 }
 
+/*
+ * BMSH_BattCurr reports discharge as positive, charge as negative.
+ *
+ * The sign was settled on 155 recorded frames of one drive: regressing the pack
+ * current on the traction current implied by VCU_DrvPwrAct and BMSH_BattVolt
+ * gives a slope of -0.968 with R2 = 0.962 against the previous scale of -0.1, so
+ * traction and current moved in opposite directions. Traction discharges the
+ * pack, so the scale is positive.
+ *
+ * That drive settled the scale and the sign, not the zero: the intercept of the
+ * same regression mixes the zero with the auxiliary load and cannot separate
+ * them. The offset below keeps the zero this catalog already used, raw 5005. It
+ * is still open, and charge-side evidence favours a value near 4999 — worth
+ * 0.6 A either way. Measuring it needs the car awake with no pack current.
+ */
+static void test_calibrated_battery_current(void) {
+    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
+    initialize_frames(frames);
+
+    uint32_t battery_current = find_signal(0x250, "BMSH_BattCurr");
+    assert(battery_current != UINT32_MAX);
+    assert(ROADCAST_SIGNALS[battery_current].calibrated == 1);
+    assert(ROADCAST_SIGNALS[battery_current].scale == 0.1);
+    assert(ROADCAST_SIGNALS[battery_current].offset == -500.5);
+    assert(strcmp(ROADCAST_SIGNALS[battery_current].unit, "A") == 0);
+
+    uint16_t frame_index = ROADCAST_SIGNALS[battery_current].frame_index;
+
+    /* Observed resting count: zero current. */
+    frames[frame_index].data[0] = 78;
+    frames[frame_index].data[1] = 52;
+    roadcast_decode_signals(frames, values);
+    assert(values[battery_current].raw == 5005);
+    assert(values[battery_current].physical > -0.001);
+    assert(values[battery_current].physical < 0.001);
+
+    /* Traction: 121 A out of the pack, the peak of the calibration drive. */
+    frames[frame_index].data[0] = 97;
+    frames[frame_index].data[1] = 28;
+    roadcast_decode_signals(frames, values);
+    assert(values[battery_current].raw == 6215);
+    assert(values[battery_current].physical > 120.999);
+    assert(values[battery_current].physical < 121.001);
+
+    /* Charging: 10.5 A into the pack. */
+    frames[frame_index].data[0] = 76;
+    frames[frame_index].data[1] = 144;
+    roadcast_decode_signals(frames, values);
+    assert(values[battery_current].raw == 4900);
+    assert(values[battery_current].physical > -10.501);
+    assert(values[battery_current].physical < -10.499);
+    assert(values[battery_current].calibrated == 1);
+}
+
 static void test_64_bit_signal(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
@@ -290,6 +345,7 @@ int main(void) {
     test_calibrated_vehicle_speed();
     test_calibrated_road_inclination();
     test_calibrated_drive_power();
+    test_calibrated_battery_current();
     test_64_bit_signal();
     test_signed_63_bit_conversion();
     test_schema_round_trip();
