@@ -21,6 +21,13 @@ schema. A release line names all three.
   `offset=0`. For example, `OBC_uInAct` raw value `2205` reports `220.5 V`.
 - `ESC_VehicleSpeed` now reports its calibrated physical value in `km/h`, with
   `scale=1` and `offset=0`.
+- `BMSH_BattCurr` reports discharge as positive and charge as negative. The
+  scale changes from `-0.1` to `0.1` and the offset from `500.5` to `-500.2`.
+  Clients that consumed this signal before got traction and pack current as
+  mirror images of each other.
+- `BMSH_BattCurr` zero moves from raw `5005` to raw `5002`, a correction of
+  `0.3 A`. The zero comes from 22 recorded trips, comparing the integral of
+  this signal against the pack energy the state of charge reports.
 
 ## [0.1.0] - 2026-07-27
 

@@ -237,11 +237,22 @@ static void test_calibrated_drive_power(void) {
  * traction and current moved in opposite directions. Traction discharges the
  * pack, so the scale is positive.
  *
- * That drive settled the scale and the sign, not the zero: the intercept of the
- * same regression mixes the zero with the auxiliary load and cannot separate
- * them. The offset below keeps the zero this catalog already used, raw 5005. It
- * is still open, and charge-side evidence favours a value near 4999 — worth
- * 0.6 A either way. Measuring it needs the car awake with no pack current.
+ * The zero is now measured too, and it is raw 5002 rather than the 5005 this
+ * catalog carried. One drive cannot separate the zero from the auxiliary load,
+ * so it took 22 closed trips: integrate this signal over each trip, compare the
+ * result against the SOC drop times the 39.6 kWh pack, and the zero is the only
+ * free parameter left. Sweeping it puts the mean ratio at 1.004 for raw 5002,
+ * against 0.966 for raw 5005 and 1.029 for raw 5000. Trip-to-trip spread is
+ * 6.8 %, so across 22 trips the 3.4 % bias of the old zero is about 2.4
+ * standard errors — small, but one-sided.
+ *
+ * The correction is 3 counts, 0.3 A, near 0.12 kW. It matters because the app
+ * reads auxiliary power as pack minus traction, a remainder that sits near
+ * 0.3 kW, so a 0.12 kW zero error is a third of the quantity measured.
+ *
+ * The same 22 trips confirm the scale. Solving the zero and the pack capacity
+ * together, with no capacity supplied, returns 40.5 kWh against the true 39.6.
+ * A wrong scale would show up here as a proportional error. It does not.
  */
 static void test_calibrated_battery_current(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
@@ -252,34 +263,42 @@ static void test_calibrated_battery_current(void) {
     assert(battery_current != UINT32_MAX);
     assert(ROADCAST_SIGNALS[battery_current].calibrated == 1);
     assert(ROADCAST_SIGNALS[battery_current].scale == 0.1);
-    assert(ROADCAST_SIGNALS[battery_current].offset == -500.5);
+    assert(ROADCAST_SIGNALS[battery_current].offset == -500.2);
     assert(strcmp(ROADCAST_SIGNALS[battery_current].unit, "A") == 0);
 
     uint16_t frame_index = ROADCAST_SIGNALS[battery_current].frame_index;
 
-    /* Observed resting count: zero current. */
+    /* Measured zero: no pack current. */
+    frames[frame_index].data[0] = 78;
+    frames[frame_index].data[1] = 40;
+    roadcast_decode_signals(frames, values);
+    assert(values[battery_current].raw == 5002);
+    assert(values[battery_current].physical > -0.001);
+    assert(values[battery_current].physical < 0.001);
+
+    /* The count this catalog used to call zero, now the 0.3 A it really is. */
     frames[frame_index].data[0] = 78;
     frames[frame_index].data[1] = 52;
     roadcast_decode_signals(frames, values);
     assert(values[battery_current].raw == 5005);
-    assert(values[battery_current].physical > -0.001);
-    assert(values[battery_current].physical < 0.001);
+    assert(values[battery_current].physical > 0.299);
+    assert(values[battery_current].physical < 0.301);
 
-    /* Traction: 121 A out of the pack, the peak of the calibration drive. */
+    /* Traction: the peak count of the calibration drive. */
     frames[frame_index].data[0] = 97;
     frames[frame_index].data[1] = 28;
     roadcast_decode_signals(frames, values);
     assert(values[battery_current].raw == 6215);
-    assert(values[battery_current].physical > 120.999);
-    assert(values[battery_current].physical < 121.001);
+    assert(values[battery_current].physical > 121.299);
+    assert(values[battery_current].physical < 121.301);
 
-    /* Charging: 10.5 A into the pack. */
+    /* Charging into the pack. */
     frames[frame_index].data[0] = 76;
     frames[frame_index].data[1] = 144;
     roadcast_decode_signals(frames, values);
     assert(values[battery_current].raw == 4900);
-    assert(values[battery_current].physical > -10.501);
-    assert(values[battery_current].physical < -10.499);
+    assert(values[battery_current].physical > -10.201);
+    assert(values[battery_current].physical < -10.199);
     assert(values[battery_current].calibrated == 1);
 }
 
