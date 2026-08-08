@@ -8137,7 +8137,7 @@
    "width": 11,
    "scale": -0.1,
    "offset": 100.0,
-   "unit": "deg",
+   "unit": "%",
    "signed": false,
    "calibrated": true
   },

@@ -156,7 +156,7 @@ static void test_calibrated_road_inclination(void) {
     assert(ROADCAST_SIGNALS[road_inclination].calibrated == 1);
     assert(ROADCAST_SIGNALS[road_inclination].scale == -0.1);
     assert(ROADCAST_SIGNALS[road_inclination].offset == 100.0);
-    assert(strcmp(ROADCAST_SIGNALS[road_inclination].unit, "deg") == 0);
+    assert(strcmp(ROADCAST_SIGNALS[road_inclination].unit, "%") == 0);
 
     uint16_t frame_index = ROADCAST_SIGNALS[road_inclination].frame_index;
     frames[frame_index].data[4] = 125;

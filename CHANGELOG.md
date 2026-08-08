@@ -43,6 +43,20 @@ schema. A release line names all three.
   reports: at count 6 the pack drew 799 W above the blower where the count
   implies 484 W, because the condenser fan ramps with the compressor on the
   12 V side and never enters this signal. Heating has no such discount.
+- `ESC_RoadInclnRoadIncln` reports its unit as `%`, not `deg`. The scale, the
+  offset and the raw decoding do not change; only the label was wrong. Road
+  data from three trips on 2026-08-08 compared the signal against the road
+  grade derived from GPS altitude over the distance travelled. Percent
+  predicts a fit slope of 1.000 and degrees predicts 0.573. A first fit over
+  4675 samples gave 0.556 to 0.621, which appears to confirm degrees, but the
+  correlation was only 0.75 to 0.80 and GPS altitude is the noisy variable.
+  Noise on that variable biases the slope toward zero. Progressively
+  restricting the fit to longer runs at a steadier speed raised the slope
+  monotonically through 0.664, 0.760, 0.806, 0.857 and 0.902 as the
+  correlation rose to 0.992. Degrees fall outside the 95 percent interval at
+  every level. The slope settles near 0.91 rather than 1.00; the remaining 9
+  percent is not identified, but a unit error is a factor of 1.745 and cannot
+  be a 9 percent bias.
 - `VCU_DCDCPwrAct` stays unscaled. The same bench run stepped the blower
   through three levels with nothing else moving, and neighbouring counts cost
   21.5 W and 157.7 W, a factor of 7.3. No single scale fits, so the count is a
