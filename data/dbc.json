@@ -7111,11 +7111,11 @@
     }
    ],
    "width": 8,
-   "scale": 0.1,
+   "scale": 0.08,
    "offset": 0.0,
    "unit": "kW",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "VCU_DCDCPwrAct",

@@ -28,16 +28,26 @@ schema. A release line names all three.
 - `BMSH_BattCurr` zero moves from raw `5005` to raw `5002`, a correction of
   `0.3 A`. The zero comes from 22 recorded trips, comparing the integral of
   this signal against the pack energy the state of charge reports.
-- `VCU_ThermalPwrAct` reports an estimated physical value in `kW`, with
-  `scale=0.1` and `offset=0`. The flag stays `calibrated=0`: two heating steps
-  measured at the pack bracket the scale at 85.5 and 104.5 W per count, which
-  contains `0.1 kW` but is not tighter than 20 percent. Cooling is not
-  proportional to this count, so a client may use the value only while the car
-  reports the PTC heater as the load.
-- `VCU_DCDCPwrAct` stays unscaled. Its steps look like 0.1 kW each, but at that
-  scale the count claims more power than the whole pack delivers in 10 of 14
-  recorded states, so no proportional decode fits both the steps and the
-  levels.
+- `VCU_ThermalPwrAct` is calibrated in `kW`, with `scale=0.08` and `offset=0`.
+  A parked bench run on 2026-08-08 moved the cabin heater alone, with the
+  blower fixed and `VCU_DCDCPwrAct` fixed, and read the pack pair as the
+  reference. Three heating levels over 89 samples give 80.61 +/- 0.64 W per
+  count, R2 = 0.9945. The fitted intercept of 288.6 W reproduces the 297.4 W
+  the blower drew in a separate state the fit never saw. The previous estimate
+  of `0.1` was 25 percent high and violated conservation of energy: it made
+  the car report 3.2 kW while the pack delivered 2.66 kW into a resistive
+  heater, whose output cannot exceed its input.
+- Two limits apply to `VCU_ThermalPwrAct` and neither changes the scale. The
+  count quantises coarsely: at count 32 the pack ranged 2744 to 2954 W, and a
+  real 210 W step moved the count by zero. Cooling costs more than the count
+  reports: at count 6 the pack drew 799 W above the blower where the count
+  implies 484 W, because the condenser fan ramps with the compressor on the
+  12 V side and never enters this signal. Heating has no such discount.
+- `VCU_DCDCPwrAct` stays unscaled. The same bench run stepped the blower
+  through three levels with nothing else moving, and neighbouring counts cost
+  21.5 W and 157.7 W, a factor of 7.3. No single scale fits, so the count is a
+  coarse state indicator and not a power measurement. This replaces the
+  earlier argument from recorded states with a controlled measurement.
 
 ## [0.1.0] - 2026-07-27
 

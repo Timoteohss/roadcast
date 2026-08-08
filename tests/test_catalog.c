@@ -303,40 +303,52 @@ static void test_calibrated_battery_current(void) {
 }
 
 /*
- * VCU_ThermalPwrAct carries an estimated scale, not a calibrated one.
+ * VCU_ThermalPwrAct is calibrated at 0.08 kW per count, measured on the car.
  *
- * The count is an 8-bit field on 0x315, the frame whose only calibrated signal
- * reports power at 0.1 kW per count. Two heating steps, each measured against
- * the pack pair and against its own all-off baseline, bracket the scale: 19
- * counts against 1984.9 W is 104.5 W per count, and 32 counts against 2737.3 W
- * is 85.5 W per count. 0.1 kW per count sits between them, and the neighbouring
- * values of the usual series are wrong by a factor of two - 0.05 puts the first
- * step at 0.95 kW against 1.98 kW measured, and 0.2 puts it at 3.8 kW.
+ * The count is an 8-bit field on 0x315. A parked bench run on 2026-08-08 held
+ * the car in READY and moved one load at a time, reading the pack pair
+ * (BMSH_BattVolt x BMSH_BattCurr) as the reference instrument. Heating is the
+ * clean regime: the blower stayed at level 8 and VCU_DCDCPwrAct stayed at 3,
+ * so the heater is the only thing that moved.
  *
- * Three reasons keep the calibration flag clear:
+ *      count    pack W     samples
+ *          0     284.7          34
+ *         20    1960.6           6
+ *         32    2863.6          49
  *
- *  - The two steps disagree by 20 %, which no measurement error explains. The
- *    pack current quantises at 0.1 A, near 40 W, so each step is good to about
- *    2 W per count.
- *  - At max heat the count implies 3.2 kW while the whole pack drew 2.90 kW.
- *    Only a request-versus-actual reading of the signal explains that, and a
- *    ramping PTC heater is the likely cause, but it is unproven.
- *  - Cooling is not proportional to this count. The compressor moved it by one
- *    count against 398 W on one occasion and by two counts against 318 W on
- *    another, so 159 and 398 W per count for the same load.
+ * Least squares over the 89 samples gives 80.61 +/- 0.64 W per count with a
+ * 288.6 W intercept and R2 = 0.9945. The intercept is the check that matters:
+ * the blower alone, measured in a separate state the fit never saw, drew
+ * 297.4 W. 0.08 kW per count lies inside the 95 % interval [79.3, 81.9] and is
+ * the only round value that does.
  *
- * A client may therefore read the physical value only while the car reports the
- * PTC heater as the load. See the calibration evidence recorded on 2026-08-07.
+ * The previous 0.1 estimate was 25 % high and violated conservation: it made
+ * the car report 3.2 kW while the pack delivered 2.66 kW. The heat was
+ * resistive, so no heat pump explains the excess - AC_ACCompReq read 0 through
+ * the whole run, and pressing the A/C button afterwards added 282 W, which is
+ * a compressor starting. A resistive heater has COP 1.0 by construction, so
+ * the thermal output cannot exceed the electrical input.
+ *
+ * Two properties a client must know, neither of which unsettles the scale:
+ *
+ *  - The count quantises coarsely. At count 32 the pack ranged 2744 to 2954 W
+ *    across three states, a spread wider than one count. A real 210 W step
+ *    moved the count by zero. The signal resolves the load in steps of a few
+ *    hundred watts, not in single counts.
+ *  - Cooling costs more than the count reports. Max cooling plateaued at count
+ *    6 drawing 799 W above the blower, where the count implies 484 W. The
+ *    missing 39 % is the condenser fan, a 12 V load that ramps with the
+ *    compressor and never enters this signal. Heating has no such discount.
  */
-static void test_estimated_thermal_power(void) {
+static void test_calibrated_thermal_power(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
     initialize_frames(frames);
 
     uint32_t thermal_power = find_signal(0x315, "VCU_ThermalPwrAct");
     assert(thermal_power != UINT32_MAX);
-    assert(ROADCAST_SIGNALS[thermal_power].calibrated == 0);
-    assert(ROADCAST_SIGNALS[thermal_power].scale == 0.1);
+    assert(ROADCAST_SIGNALS[thermal_power].calibrated == 1);
+    assert(ROADCAST_SIGNALS[thermal_power].scale == 0.08);
     assert(ROADCAST_SIGNALS[thermal_power].offset == 0.0);
     assert(strcmp(ROADCAST_SIGNALS[thermal_power].unit, "kW") == 0);
 
@@ -347,28 +359,28 @@ static void test_estimated_thermal_power(void) {
     roadcast_decode_signals(frames, values);
     assert(values[thermal_power].raw == 0);
     assert(values[thermal_power].physical == 0.0);
-    assert(values[thermal_power].calibrated == 0);
+    assert(values[thermal_power].calibrated == 1);
 
-    /* The first heating step: 19 counts, 1984.9 W measured at the pack. */
-    frames[frame_index].data[3] = 19;
+    /* Mid heat: 20 counts, 1675.9 W measured above the blower baseline. */
+    frames[frame_index].data[3] = 20;
     roadcast_decode_signals(frames, values);
-    assert(values[thermal_power].raw == 19);
-    assert(values[thermal_power].physical > 1.899);
-    assert(values[thermal_power].physical < 1.901);
+    assert(values[thermal_power].raw == 20);
+    assert(values[thermal_power].physical > 1.599);
+    assert(values[thermal_power].physical < 1.601);
 
-    /* Max heat: 32 counts, 2737.3 W measured while the heater still ramped. */
+    /* Max heat: 32 counts, 2578.9 W measured above the same baseline. */
     frames[frame_index].data[3] = 32;
     roadcast_decode_signals(frames, values);
     assert(values[thermal_power].raw == 32);
-    assert(values[thermal_power].physical > 3.199);
-    assert(values[thermal_power].physical < 3.201);
+    assert(values[thermal_power].physical > 2.559);
+    assert(values[thermal_power].physical < 2.561);
 
     /* Full scale of the field, which bounds any reading of this signal. */
     frames[frame_index].data[3] = 255;
     roadcast_decode_signals(frames, values);
     assert(values[thermal_power].raw == 255);
-    assert(values[thermal_power].physical > 25.499);
-    assert(values[thermal_power].physical < 25.501);
+    assert(values[thermal_power].physical > 20.399);
+    assert(values[thermal_power].physical < 20.401);
 }
 
 /*
@@ -475,7 +487,7 @@ int main(void) {
     test_calibrated_road_inclination();
     test_calibrated_drive_power();
     test_calibrated_battery_current();
-    test_estimated_thermal_power();
+    test_calibrated_thermal_power();
     test_unscaled_dcdc_power();
     test_64_bit_signal();
     test_signed_63_bit_conversion();
