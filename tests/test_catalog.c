@@ -302,6 +302,116 @@ static void test_calibrated_battery_current(void) {
     assert(values[battery_current].calibrated == 1);
 }
 
+/*
+ * VCU_ThermalPwrAct carries an estimated scale, not a calibrated one.
+ *
+ * The count is an 8-bit field on 0x315, the frame whose only calibrated signal
+ * reports power at 0.1 kW per count. Two heating steps, each measured against
+ * the pack pair and against its own all-off baseline, bracket the scale: 19
+ * counts against 1984.9 W is 104.5 W per count, and 32 counts against 2737.3 W
+ * is 85.5 W per count. 0.1 kW per count sits between them, and the neighbouring
+ * values of the usual series are wrong by a factor of two - 0.05 puts the first
+ * step at 0.95 kW against 1.98 kW measured, and 0.2 puts it at 3.8 kW.
+ *
+ * Three reasons keep the calibration flag clear:
+ *
+ *  - The two steps disagree by 20 %, which no measurement error explains. The
+ *    pack current quantises at 0.1 A, near 40 W, so each step is good to about
+ *    2 W per count.
+ *  - At max heat the count implies 3.2 kW while the whole pack drew 2.90 kW.
+ *    Only a request-versus-actual reading of the signal explains that, and a
+ *    ramping PTC heater is the likely cause, but it is unproven.
+ *  - Cooling is not proportional to this count. The compressor moved it by one
+ *    count against 398 W on one occasion and by two counts against 318 W on
+ *    another, so 159 and 398 W per count for the same load.
+ *
+ * A client may therefore read the physical value only while the car reports the
+ * PTC heater as the load. See the calibration evidence recorded on 2026-08-07.
+ */
+static void test_estimated_thermal_power(void) {
+    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
+    initialize_frames(frames);
+
+    uint32_t thermal_power = find_signal(0x315, "VCU_ThermalPwrAct");
+    assert(thermal_power != UINT32_MAX);
+    assert(ROADCAST_SIGNALS[thermal_power].calibrated == 0);
+    assert(ROADCAST_SIGNALS[thermal_power].scale == 0.1);
+    assert(ROADCAST_SIGNALS[thermal_power].offset == 0.0);
+    assert(strcmp(ROADCAST_SIGNALS[thermal_power].unit, "kW") == 0);
+
+    uint16_t frame_index = ROADCAST_SIGNALS[thermal_power].frame_index;
+
+    /* No thermal load: the count rests at zero, so the scale adds no bias. */
+    frames[frame_index].data[3] = 0;
+    roadcast_decode_signals(frames, values);
+    assert(values[thermal_power].raw == 0);
+    assert(values[thermal_power].physical == 0.0);
+    assert(values[thermal_power].calibrated == 0);
+
+    /* The first heating step: 19 counts, 1984.9 W measured at the pack. */
+    frames[frame_index].data[3] = 19;
+    roadcast_decode_signals(frames, values);
+    assert(values[thermal_power].raw == 19);
+    assert(values[thermal_power].physical > 1.899);
+    assert(values[thermal_power].physical < 1.901);
+
+    /* Max heat: 32 counts, 2737.3 W measured while the heater still ramped. */
+    frames[frame_index].data[3] = 32;
+    roadcast_decode_signals(frames, values);
+    assert(values[thermal_power].raw == 32);
+    assert(values[thermal_power].physical > 3.199);
+    assert(values[thermal_power].physical < 3.201);
+
+    /* Full scale of the field, which bounds any reading of this signal. */
+    frames[frame_index].data[3] = 255;
+    roadcast_decode_signals(frames, values);
+    assert(values[thermal_power].raw == 255);
+    assert(values[thermal_power].physical > 25.499);
+    assert(values[thermal_power].physical < 25.501);
+}
+
+/*
+ * VCU_DCDCPwrAct stays unscaled, and this test pins the refusal.
+ *
+ * The steps of this count look like 0.1 kW each: with the car stationary and
+ * every high-voltage load off, switching the rear defroster on moved it from 1
+ * to 3 while the pack draw rose by 199.1 W. The levels refuse that reading. At
+ * 0.1 kW per count the signal claims more power than the whole pack delivers in
+ * 10 of the 14 recorded states - it reads 3, or 300 W, with every load off and
+ * a pack draw of 159.3 W. A converter cannot deliver more than its supply.
+ *
+ * An offset does not repair it either. At 0.1 kW per count above raw 1, the
+ * max-cold state still claims 500 W of 12 V draw inside a 557 W pack draw whose
+ * compressor alone accounts for 318 W.
+ *
+ * So the steps and the levels cannot both be power, and no proportional decode
+ * satisfies them. Whatever this count reports, it is not the converter output
+ * in kW. It keeps its raw value and no unit until a controlled test with a
+ * large, stable, purely 12 V load settles it.
+ */
+static void test_unscaled_dcdc_power(void) {
+    roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
+    roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
+    initialize_frames(frames);
+
+    uint32_t dcdc_power = find_signal(0x315, "VCU_DCDCPwrAct");
+    assert(dcdc_power != UINT32_MAX);
+    assert(ROADCAST_SIGNALS[dcdc_power].calibrated == 0);
+    assert(ROADCAST_SIGNALS[dcdc_power].scale == 1.0);
+    assert(ROADCAST_SIGNALS[dcdc_power].offset == 0.0);
+    assert(strcmp(ROADCAST_SIGNALS[dcdc_power].unit, "") == 0);
+
+    uint16_t frame_index = ROADCAST_SIGNALS[dcdc_power].frame_index;
+
+    /* The count reaches the client unchanged, which is the whole contract. */
+    frames[frame_index].data[4] = 3;
+    roadcast_decode_signals(frames, values);
+    assert(values[dcdc_power].raw == 3);
+    assert(values[dcdc_power].physical == 3.0);
+    assert(values[dcdc_power].calibrated == 0);
+}
+
 static void test_64_bit_signal(void) {
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t values[ROADCAST_SIGNAL_COUNT];
@@ -365,6 +475,8 @@ int main(void) {
     test_calibrated_road_inclination();
     test_calibrated_drive_power();
     test_calibrated_battery_current();
+    test_estimated_thermal_power();
+    test_unscaled_dcdc_power();
     test_64_bit_signal();
     test_signed_63_bit_conversion();
     test_schema_round_trip();

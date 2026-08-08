@@ -818,7 +818,7 @@ static const roadcast_signal_part_t SIGNAL_PARTS_812[] = {{4, 24, 8}};
 static const roadcast_signal_part_t SIGNAL_PARTS_813[] = {{0, 24, 8}, {0, 16, 8}, {0, 8, 8}, {0, 0, 8}, {4, 24, 8}, {4, 16, 8}, {4, 8, 8}, {4, 0, 8}};
 static const roadcast_signal_part_t SIGNAL_PARTS_814[] = {{0, 24, 8}, {0, 16, 8}, {0, 8, 8}, {0, 0, 8}, {4, 24, 8}, {4, 16, 8}, {4, 8, 8}, {4, 0, 8}};
 
-const uint64_t ROADCAST_CAN_SCHEMA_HASH = UINT64_C(0x93ba499b44f5f197);
+const uint64_t ROADCAST_CAN_SCHEMA_HASH = UINT64_C(0x640d64b57d34be97);
 
 const roadcast_signal_definition_t
     ROADCAST_SIGNALS[ROADCAST_SIGNAL_COUNT] = {
@@ -6840,7 +6840,7 @@ const roadcast_signal_definition_t
         {
             .stable_id = UINT64_C(0x6f1c21ed383fcec8),
             .name = "VCU_ThermalPwrAct",
-            .unit = "",
+            .unit = "kW",
             .parts = SIGNAL_PARTS_401,
             .invalid_signal_index = UINT32_C(4294967295),
             .can_id = UINT16_C(0x315),
@@ -6849,7 +6849,7 @@ const roadcast_signal_definition_t
             .width = UINT8_C(8),
             .is_signed = UINT8_C(0),
             .calibrated = UINT8_C(0),
-            .scale = 1,
+            .scale = 0.10000000000000001,
             .offset = 0,
         },
         {

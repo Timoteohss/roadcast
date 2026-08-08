@@ -28,6 +28,16 @@ schema. A release line names all three.
 - `BMSH_BattCurr` zero moves from raw `5005` to raw `5002`, a correction of
   `0.3 A`. The zero comes from 22 recorded trips, comparing the integral of
   this signal against the pack energy the state of charge reports.
+- `VCU_ThermalPwrAct` reports an estimated physical value in `kW`, with
+  `scale=0.1` and `offset=0`. The flag stays `calibrated=0`: two heating steps
+  measured at the pack bracket the scale at 85.5 and 104.5 W per count, which
+  contains `0.1 kW` but is not tighter than 20 percent. Cooling is not
+  proportional to this count, so a client may use the value only while the car
+  reports the PTC heater as the load.
+- `VCU_DCDCPwrAct` stays unscaled. Its steps look like 0.1 kW each, but at that
+  scale the count claims more power than the whole pack delivers in 10 of 14
+  recorded states, so no proportional decode fits both the steps and the
+  levels.
 
 ## [0.1.0] - 2026-07-27
 

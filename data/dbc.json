@@ -7111,9 +7111,9 @@
     }
    ],
    "width": 8,
-   "scale": 1.0,
+   "scale": 0.1,
    "offset": 0.0,
-   "unit": "",
+   "unit": "kW",
    "signed": false,
    "calibrated": false
   },
