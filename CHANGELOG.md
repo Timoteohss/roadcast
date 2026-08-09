@@ -16,6 +16,23 @@ schema. A release line names all three.
 
 ### Changed
 
+- Eight climate and drivetrain state signals are now calibrated. Their decode
+  is the identity, `scale=1` and `offset=0`, because each one is a state or a
+  level and not a measured quantity: `AC_OnState`, `AC_ACCompReq`,
+  `AC_BlowerLevel`, `BCM_RearDefrosterSts`, `BCM_DM_TargetModeReq` and
+  `VCU_ePTRegencyLevInd` stay unitless, and
+  `AC_LeftSetTemperature` reports the cabin setpoint in `degC` with
+  `scale=0.5` and `offset=15.5`. The head unit offers 15.5 to 28.5 degC in
+  half-degree steps, which is 27 values, and the signal is 5 bits wide, so raw
+  `0` is the minimum and raw `26` the maximum. The five counts above that are
+  unassigned and may carry special states. The flag tells
+  a client that the raw count is the value, so a client no longer has to read
+  these through a raw-count path that bypasses validation. It does not name
+  the enumeration behind each count; a client keeps that mapping. Two of them
+  are known from the car: `BCM_DM_TargetModeReq` is 0 for NORMAL, 1 for ECO
+  and 2 for SPORT, and `VCU_ePTRegencyLevInd` is 1 for low regeneration, 2 for
+  medium and 3 for high. The drive mode is on `BCM_DM_TargetModeReq` and not
+  on the `VCU_ePTMode*` pair, which stays uncalibrated.
 - Calibrated charger AC input measurements: `OBC_uInAct` reports voltage in
   `V`, and `OBC_iInAct` reports current in `A`; both use `scale=0.1` and
   `offset=0`. For example, `OBC_uInAct` raw value `2205` reports `220.5 V`.

@@ -129,7 +129,7 @@
    "offset": 0.0,
    "unit": "",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "AC_AmbientTemperatureInvalid",
@@ -498,7 +498,7 @@
    "offset": 0.0,
    "unit": "",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "AC_SYNCState",
@@ -600,7 +600,7 @@
    "offset": 0.0,
    "unit": "",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "AC_SeatHeatDispReq",
@@ -664,11 +664,11 @@
     }
    ],
    "width": 5,
-   "scale": 1.0,
-   "offset": 0.0,
-   "unit": "",
+   "scale": 0.5,
+   "offset": 15.5,
+   "unit": "degC",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "AC_VentilaDryResp",
@@ -923,7 +923,7 @@
    "offset": 0.0,
    "unit": "",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "BCM_WiperSts",
@@ -7760,7 +7760,7 @@
    "offset": 0.0,
    "unit": "",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "VCU_LimpHomeSts",
@@ -7862,7 +7862,7 @@
    "offset": 0.0,
    "unit": "",
    "signed": false,
-   "calibrated": false
+   "calibrated": true
   },
   {
    "name": "BCM_DM_SwitchModeSts",
