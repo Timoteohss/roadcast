@@ -78,6 +78,8 @@ grep -q '^client-sdk: protocol=3 hz=240 frames=111 signals=815 schema=1$' \
   "$TEMP_DIR/client-sdk.stdout"
 grep -q '^client-value: name=ESC_VehicleSpeed .* state=2 ' \
   "$TEMP_DIR/client-sdk.stdout"
+grep -Eq '^client-frame: can=0x[0-9a-f]{3} state=2 data=[0-9a-f]{16}$' \
+  "$TEMP_DIR/client-sdk.stdout"
 grep -Eq '^client-summary: connected=1 sample_seq=[1-9][0-9]* change_seq=[1-9][0-9]* ' \
   "$TEMP_DIR/client-sdk.stdout"
 

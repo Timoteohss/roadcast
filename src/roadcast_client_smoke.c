@@ -82,6 +82,30 @@ int main(int argc, char **argv) {
            " physical=%.6f calibrated=%u\n",
            signal_name, index, value.state, value.raw, value.physical,
            value.calibrated);
+    roadcast_frame_t frame;
+    if (roadcast_client_read_frame(client, entry->can_id, &frame) < 0 ||
+        frame.can_id != entry->can_id) {
+        fprintf(stderr, "raw frame 0x%03x is unavailable\n", entry->can_id);
+        roadcast_client_close(client);
+        return 1;
+    }
+    if (roadcast_client_read_frame(client, 0xffff, &frame) !=
+        ROADCAST_CLIENT_ERR_ARGUMENT) {
+        fprintf(stderr, "unknown CAN id was accepted\n");
+        roadcast_client_close(client);
+        return 1;
+    }
+    if (roadcast_client_read_frame(client, entry->can_id, &frame) < 0) {
+        fprintf(stderr, "raw frame reread failed\n");
+        roadcast_client_close(client);
+        return 1;
+    }
+    printf("client-frame: can=0x%03x state=%u data=%02x%02x%02x%02x%02x%02x"
+           "%02x%02x\n",
+           frame.can_id, frame.state, frame.data[0], frame.data[1],
+           frame.data[2], frame.data[3], frame.data[4], frame.data[5],
+           frame.data[6], frame.data[7]);
+
     printf("client-summary: connected=%u sample_seq=%" PRIu64
            " change_seq=%" PRIu64 " resyncs=%" PRIu64 " dropped=%" PRIu64
            " coalesced=%" PRIu64 " age_ns=%" PRId64 "\n",

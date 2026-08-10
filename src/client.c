@@ -799,6 +799,22 @@ int roadcast_client_read_signals(roadcast_client_t *client,
     return ROADCAST_CLIENT_OK;
 }
 
+int roadcast_client_read_frame(roadcast_client_t *client, uint16_t can_id,
+                               roadcast_frame_t *frame) {
+    if (!client || !frame)
+        return ROADCAST_CLIENT_ERR_ARGUMENT;
+    pthread_mutex_lock(&client->cache_lock);
+    for (uint32_t i = 0; i < client->frame_count; i++) {
+        if (client->frames[i].can_id != can_id)
+            continue;
+        *frame = client->frames[i];
+        pthread_mutex_unlock(&client->cache_lock);
+        return ROADCAST_CLIENT_OK;
+    }
+    pthread_mutex_unlock(&client->cache_lock);
+    return ROADCAST_CLIENT_ERR_ARGUMENT;
+}
+
 int32_t roadcast_client_read_all(roadcast_client_t *client,
                                  roadcast_signal_value_t *values,
                                  size_t capacity) {

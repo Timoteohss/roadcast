@@ -74,6 +74,18 @@ int roadcast_client_read_signals(roadcast_client_t *client,
                                  roadcast_signal_value_t *values);
 
 /*
+ * Copies the cached raw frame carrying can_id, including its eight source
+ * bytes and observation state. Returns ROADCAST_CLIENT_ERR_ARGUMENT when the
+ * catalog defines no frame for can_id.
+ *
+ * The bytes are the unmodified source frame: they also carry the bits the
+ * catalog defines no signal for. A consumer reading those bits is reading an
+ * uncalibrated value with no confirmed scale, offset, or unit.
+ */
+int roadcast_client_read_frame(roadcast_client_t *client, uint16_t can_id,
+                               roadcast_frame_t *frame);
+
+/*
  * Copies the complete current signal cache. Returns the number of copied
  * entries, or a negative client error.
  */
