@@ -818,7 +818,7 @@ static const roadcast_signal_part_t SIGNAL_PARTS_812[] = {{4, 24, 8}};
 static const roadcast_signal_part_t SIGNAL_PARTS_813[] = {{0, 24, 8}, {0, 16, 8}, {0, 8, 8}, {0, 0, 8}, {4, 24, 8}, {4, 16, 8}, {4, 8, 8}, {4, 0, 8}};
 static const roadcast_signal_part_t SIGNAL_PARTS_814[] = {{0, 24, 8}, {0, 16, 8}, {0, 8, 8}, {0, 0, 8}, {4, 24, 8}, {4, 16, 8}, {4, 8, 8}, {4, 0, 8}};
 
-const uint64_t ROADCAST_CAN_SCHEMA_HASH = UINT64_C(0x01f4aa2d759cf647);
+const uint64_t ROADCAST_CAN_SCHEMA_HASH = UINT64_C(0x1dc4451ee12a84c7);
 
 const roadcast_signal_definition_t
     ROADCAST_SIGNALS[ROADCAST_SIGNAL_COUNT] = {
@@ -7704,7 +7704,7 @@ const roadcast_signal_definition_t
             .width = UINT8_C(11),
             .is_signed = UINT8_C(0),
             .calibrated = UINT8_C(1),
-            .scale = -0.10000000000000001,
+            .scale = 0.10000000000000001,
             .offset = 100,
         },
         {

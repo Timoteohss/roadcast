@@ -154,7 +154,7 @@ static void test_calibrated_road_inclination(void) {
     uint32_t road_inclination = find_signal(0x128, "ESC_RoadInclnRoadIncln");
     assert(road_inclination != UINT32_MAX);
     assert(ROADCAST_SIGNALS[road_inclination].calibrated == 1);
-    assert(ROADCAST_SIGNALS[road_inclination].scale == -0.1);
+    assert(ROADCAST_SIGNALS[road_inclination].scale == 0.1);
     assert(ROADCAST_SIGNALS[road_inclination].offset == 100.0);
     assert(strcmp(ROADCAST_SIGNALS[road_inclination].unit, "%") == 0);
 
@@ -162,20 +162,20 @@ static void test_calibrated_road_inclination(void) {
     frames[frame_index].data[4] = 125;
     roadcast_decode_signals(frames, values);
     assert(values[road_inclination].raw == 1000);
-    assert(values[road_inclination].physical > -0.001);
-    assert(values[road_inclination].physical < 0.001);
+    assert(values[road_inclination].physical > 199.999);
+    assert(values[road_inclination].physical < 200.001);
 
     frames[frame_index].data[4] = 100;
     roadcast_decode_signals(frames, values);
     assert(values[road_inclination].raw == 800);
-    assert(values[road_inclination].physical > 19.999);
-    assert(values[road_inclination].physical < 20.001);
+    assert(values[road_inclination].physical > 179.999);
+    assert(values[road_inclination].physical < 180.001);
 
     frames[frame_index].data[4] = 150;
     roadcast_decode_signals(frames, values);
     assert(values[road_inclination].raw == 1200);
-    assert(values[road_inclination].physical > -20.001);
-    assert(values[road_inclination].physical < -19.999);
+    assert(values[road_inclination].physical > 219.999);
+    assert(values[road_inclination].physical < 220.001);
     assert(values[road_inclination].calibrated == 1);
 }
 
