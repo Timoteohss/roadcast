@@ -1076,24 +1076,63 @@ static void reconcile_signal_timestamps(roadcast_signal_value_t *latest,
 
 static void distribute_latest_sample(roadcast_server_t *server) {
     roadcast_frame_t latest[ROADCAST_FRAME_COUNT];
-    roadcast_signal_value_t latest_signals[ROADCAST_SIGNAL_COUNT];
     uint64_t sequence;
     uint64_t timestamp_ns;
     sampler_read_latest(&server->sampler, latest, &sequence, &timestamp_ns);
     if (sequence <= server->sample_sequence)
         return;
-    roadcast_decode_signals(latest, latest_signals);
-    reconcile_signal_timestamps(latest_signals, server->signals, timestamp_ns);
 
     uint64_t elapsed_ticks = sequence - server->sample_sequence;
     uint16_t changed[ROADCAST_FRAME_COUNT];
     size_t changed_count = 0;
+    bool frame_changed[ROADCAST_FRAME_COUNT] = {false};
     for (size_t i = 0; i < ROADCAST_FRAME_COUNT; i++) {
         if (latest[i].state != server->frames[i].state ||
             memcmp(latest[i].data, server->frames[i].data,
-                   sizeof(latest[i].data)) != 0)
+                   sizeof(latest[i].data)) != 0) {
             changed[changed_count++] = (uint16_t)i;
+            frame_changed[i] = true;
+        }
     }
+
+    if (!changed_count) {
+        memcpy(server->frames, latest, sizeof(server->frames));
+        server->sample_sequence = sequence;
+        server->sample_timestamp_ns = timestamp_ns;
+        server->stats.ticks += elapsed_ticks;
+        server->stats.coalesced_samples += elapsed_ticks - 1;
+        server->coalesced_samples += elapsed_ticks - 1;
+        return;
+    }
+
+    roadcast_signal_value_t latest_signals[ROADCAST_SIGNAL_COUNT];
+    memcpy(latest_signals, server->signals, sizeof(latest_signals));
+
+    for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
+        const roadcast_signal_definition_t *def = &ROADCAST_SIGNALS[i];
+        if (!frame_changed[def->frame_index])
+            continue;
+        const roadcast_frame_t *frame = &latest[def->frame_index];
+        latest_signals[i].raw = roadcast_decode_signal_raw(def, frame->data);
+        latest_signals[i].physical =
+            roadcast_decode_signal_physical(def, latest_signals[i].raw);
+        latest_signals[i].state = frame->state;
+        latest_signals[i].calibrated = def->calibrated;
+    }
+
+    for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
+        const roadcast_signal_definition_t *def = &ROADCAST_SIGNALS[i];
+        uint32_t inv = def->invalid_signal_index;
+        if (inv != UINT32_MAX && (frame_changed[def->frame_index] ||
+                                  frame_changed[ROADCAST_SIGNALS[inv].frame_index])) {
+            if (latest_signals[i].state == ROADCAST_OBSERVATION_VALID &&
+                latest_signals[inv].raw != 0)
+                latest_signals[i].state = ROADCAST_OBSERVATION_INVALID;
+        }
+    }
+
+    reconcile_signal_timestamps(latest_signals, server->signals, timestamp_ns);
+
     uint32_t changed_signals[ROADCAST_SIGNAL_COUNT];
     size_t changed_signal_count = 0;
     for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
@@ -1118,54 +1157,75 @@ static void distribute_latest_sample(roadcast_server_t *server) {
         return;
 
     server->change_sequence++;
+
+    typedef struct {
+        uint8_t payload[CLIENT_MESSAGE_CAP - ROADCAST_HEADER_SIZE];
+        size_t length;
+    } broadcast_chunk_t;
+
+    broadcast_chunk_t frame_chunks[8];
+    size_t num_frame_chunks = 0;
+    size_t frame_offset = 0;
+    while (frame_offset < changed_count && num_frame_chunks < 8) {
+        size_t chunk_count = changed_count - frame_offset;
+        if (chunk_count > FRAMES_PER_MESSAGE)
+            chunk_count = FRAMES_PER_MESSAGE;
+        frame_chunks[num_frame_chunks].length = roadcast_encode_frame_batch(
+            frame_chunks[num_frame_chunks].payload,
+            sizeof(frame_chunks[num_frame_chunks].payload), sequence,
+            ROADCAST_FRAME_COUNT, UINT32_MAX, server->frames,
+            changed + frame_offset, chunk_count);
+        num_frame_chunks++;
+        frame_offset += chunk_count;
+    }
+
+    broadcast_chunk_t signal_chunks[20];
+    size_t num_signal_chunks = 0;
+    size_t signal_offset = 0;
+    while (signal_offset < changed_signal_count && num_signal_chunks < 20) {
+        size_t chunk_count = changed_signal_count - signal_offset;
+        if (chunk_count > SIGNALS_PER_MESSAGE)
+            chunk_count = SIGNALS_PER_MESSAGE;
+        signal_chunks[num_signal_chunks].length = roadcast_encode_signal_batch(
+            signal_chunks[num_signal_chunks].payload,
+            sizeof(signal_chunks[num_signal_chunks].payload), sequence,
+            ROADCAST_SIGNAL_COUNT, UINT32_MAX, server->signals,
+            changed_signals + signal_offset, chunk_count);
+        num_signal_chunks++;
+        signal_offset += chunk_count;
+    }
+
     for (size_t i = 0; i < MAX_CLIENTS; i++) {
         roadcast_client_t *client = &server->clients[i];
         if (!client->active || !client->subscribed || client->needs_resync)
             continue;
 
-        size_t frame_offset = 0;
-        while (frame_offset < changed_count && client->active &&
-               !client->needs_resync) {
-            size_t chunk_count = changed_count - frame_offset;
-            if (chunk_count > FRAMES_PER_MESSAGE)
-                chunk_count = FRAMES_PER_MESSAGE;
-            uint8_t frame_payload[CLIENT_MESSAGE_CAP - ROADCAST_HEADER_SIZE];
-            size_t frame_payload_length = roadcast_encode_frame_batch(
-                frame_payload, sizeof(frame_payload), sequence,
-                ROADCAST_FRAME_COUNT, UINT32_MAX, server->frames,
-                changed + frame_offset, chunk_count);
-            if (!frame_payload_length ||
+        for (size_t c = 0; c < num_frame_chunks && client->active &&
+                           !client->needs_resync;
+             c++) {
+            if (!frame_chunks[c].length ||
                 client_queue_message(
                     client, ROADCAST_MSG_UPDATE_BATCH, server->change_sequence,
-                    timestamp_ns, frame_payload, frame_payload_length, 1) < 0) {
+                    timestamp_ns, frame_chunks[c].payload,
+                    frame_chunks[c].length, 1) < 0) {
                 client_close(client);
                 break;
             }
-            frame_offset += chunk_count;
         }
         if (!client->active || client->needs_resync)
             continue;
 
-        size_t signal_offset = 0;
-        while (signal_offset < changed_signal_count && client->active &&
-               !client->needs_resync) {
-            size_t chunk_count = changed_signal_count - signal_offset;
-            if (chunk_count > SIGNALS_PER_MESSAGE)
-                chunk_count = SIGNALS_PER_MESSAGE;
-            uint8_t signal_payload[CLIENT_MESSAGE_CAP - ROADCAST_HEADER_SIZE];
-            size_t signal_payload_length = roadcast_encode_signal_batch(
-                signal_payload, sizeof(signal_payload), sequence,
-                ROADCAST_SIGNAL_COUNT, UINT32_MAX, server->signals,
-                changed_signals + signal_offset, chunk_count);
-            if (!signal_payload_length ||
-                client_queue_message(client, ROADCAST_MSG_SIGNAL_UPDATE_BATCH,
-                                     server->change_sequence, timestamp_ns,
-                                     signal_payload, signal_payload_length,
-                                     1) < 0) {
+        for (size_t c = 0; c < num_signal_chunks && client->active &&
+                           !client->needs_resync;
+             c++) {
+            if (!signal_chunks[c].length ||
+                client_queue_message(
+                    client, ROADCAST_MSG_SIGNAL_UPDATE_BATCH,
+                    server->change_sequence, timestamp_ns,
+                    signal_chunks[c].payload, signal_chunks[c].length, 1) < 0) {
                 client_close(client);
                 break;
             }
-            signal_offset += chunk_count;
         }
     }
 }

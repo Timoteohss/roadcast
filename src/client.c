@@ -22,6 +22,7 @@
 #define CLIENT_SETUP_TIMEOUT_MS 10000
 #define CLIENT_MAX_FRAMES 65535u
 #define CLIENT_MAX_SIGNALS 100000u
+#define CAN_ID_LOOKUP_CAP 2048u
 
 struct roadcast_client {
     int fd;
@@ -39,6 +40,7 @@ struct roadcast_client {
     roadcast_schema_entry_t *schema;
     roadcast_frame_t *frames;
     roadcast_signal_value_t *signals;
+    uint16_t can_id_to_index[CAN_ID_LOOKUP_CAP];
 
     uint32_t hz;
     uint32_t frame_count;
@@ -362,6 +364,11 @@ static int request_frame_snapshot(roadcast_client_t *client,
         }
         next_index += (uint32_t)frame_count;
     }
+    for (uint32_t i = 0; i < client->frame_count; i++) {
+        uint16_t can_id = sync->frames[i].can_id;
+        if (can_id < CAN_ID_LOOKUP_CAP)
+            client->can_id_to_index[can_id] = (uint16_t)i;
+    }
     return 0;
 }
 
@@ -424,14 +431,11 @@ static int apply_decoded_frames(roadcast_client_t *client,
                                 const roadcast_header_t *header,
                                 uint64_t sample_sequence, size_t frame_count) {
     for (size_t i = 0; i < frame_count; i++) {
-        size_t target = client->frame_count;
-        for (size_t j = 0; j < client->frame_count; j++) {
-            if (sync->frames[j].can_id == client->frame_scratch[i].can_id) {
-                target = j;
-                break;
-            }
-        }
-        if (target == client->frame_count)
+        uint16_t can_id = client->frame_scratch[i].can_id;
+        uint16_t target = (can_id < CAN_ID_LOOKUP_CAP)
+                              ? client->can_id_to_index[can_id]
+                              : UINT16_MAX;
+        if (target >= client->frame_count)
             return -1;
         sync->frames[target] = client->frame_scratch[i];
     }
@@ -564,6 +568,13 @@ static void commit_synchronization(roadcast_client_t *client,
     client->change_sequence = sync->change_sequence;
     client->sample_timestamp_ns = sync->sample_timestamp_ns;
     client->connected = 1;
+    for (size_t i = 0; i < CAN_ID_LOOKUP_CAP; i++)
+        client->can_id_to_index[i] = UINT16_MAX;
+    for (uint32_t i = 0; i < client->frame_count; i++) {
+        uint16_t can_id = client->frames[i].can_id;
+        if (can_id < CAN_ID_LOOKUP_CAP)
+            client->can_id_to_index[can_id] = (uint16_t)i;
+    }
     pthread_mutex_unlock(&client->cache_lock);
 }
 
@@ -747,6 +758,8 @@ roadcast_client_t *roadcast_client_connect(const char *socket_name,
     client->max_request_payload = 8;
     client->payload_capacity = ROADCAST_WELCOME_SIZE;
     client->payload = malloc(client->payload_capacity);
+    for (size_t i = 0; i < CAN_ID_LOOKUP_CAP; i++)
+        client->can_id_to_index[i] = UINT16_MAX;
     if (!client->payload ||
         pthread_mutex_init(&client->cache_lock, NULL) != 0) {
         if (error)
@@ -928,10 +941,11 @@ int roadcast_client_read_frame(roadcast_client_t *client, uint16_t can_id,
     if (!client || !frame)
         return ROADCAST_CLIENT_ERR_ARGUMENT;
     pthread_mutex_lock(&client->cache_lock);
-    for (uint32_t i = 0; i < client->frame_count; i++) {
-        if (client->frames[i].can_id != can_id)
-            continue;
-        *frame = client->frames[i];
+    uint16_t target = (can_id < CAN_ID_LOOKUP_CAP)
+                          ? client->can_id_to_index[can_id]
+                          : UINT16_MAX;
+    if (target < client->frame_count) {
+        *frame = client->frames[target];
         pthread_mutex_unlock(&client->cache_lock);
         return ROADCAST_CLIENT_OK;
     }
