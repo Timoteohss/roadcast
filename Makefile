@@ -31,7 +31,10 @@ $(BUILD_DIR)/.catalog.stamp: data/dbc.json scripts/generate-catalog.py | $(BUILD
 	@touch $@
 
 $(CATALOG_GENERATED): $(BUILD_DIR)/.catalog.stamp
-	@:
+	@if [ ! -f $@ ]; then \
+		rm -f $(BUILD_DIR)/.catalog.stamp; \
+		$(MAKE) $(BUILD_DIR)/.catalog.stamp; \
+	fi
 
 generate: | $(BUILD_DIR)
 	scripts/generate-catalog.py
