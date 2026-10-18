@@ -49,6 +49,19 @@ retain their numeric indexes, and use batched reads for a gauge frame. Name-only
 lookup returns the first match and is unsuitable for duplicated names. Schema
 pointers are immutable and remain valid until the client is closed.
 
+## Deadlines and Timeouts
+
+`libroadcast_client` enforces monotonic clock deadlines on all blocking operations:
+
+- **Connection:** 3000 ms limit to connect to the Unix domain socket.
+- **Message I/O:** 3000 ms per outbound and inbound message (header and payload
+  share a single monotonic deadline, preventing slow-trickle socket starvation).
+- **Setup & Resync Budget:** 10000 ms global budget across handshake, schema
+  discovery, and initial snapshot catch-up.
+- **Non-blocking sockets:** Underlying file descriptors use `O_NONBLOCK` with
+  poll-based readiness waits. Calling `roadcast_client_close()` triggers
+  `shutdown()` and unblocks pending waits immediately.
+
 ## Android Integration
 
 The Android build produces `libroadcast_client.so`. Application-specific Dart

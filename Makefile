@@ -4,7 +4,8 @@ PKG_CONFIG ?= pkg-config
 
 BUILD_DIR := build
 COMMON_SOURCES := src/protocol.c
-COMMON_HEADERS := $(wildcard include/*.h)
+GENERATED_HEADERS := include/roadcast_catalog_generated.h include/roadcast_frames.h
+COMMON_HEADERS := $(sort $(wildcard include/*.h) $(GENERATED_HEADERS))
 CATALOG_SOURCES := src/catalog.c src/catalog_generated.c
 CATALOG_GENERATED := include/roadcast_catalog_generated.h include/roadcast_frames.h src/catalog_generated.c
 LIBUV_CFLAGS := $(shell $(PKG_CONFIG) --cflags libuv 2>/dev/null)
@@ -25,11 +26,10 @@ all: $(BUILD_DIR)/roadcastd $(BUILD_DIR)/roadcastctl \
 $(BUILD_DIR):
 	mkdir -p $@
 
-$(CATALOG_GENERATED): data/dbc.json scripts/generate-catalog.py
+$(CATALOG_GENERATED) &: data/dbc.json scripts/generate-catalog.py
 	scripts/generate-catalog.py
 
-generate:
-	scripts/generate-catalog.py
+generate: $(CATALOG_GENERATED)
 
 $(BUILD_DIR)/roadcastd: src/roadcastd.c src/vhal_source.c $(COMMON_SOURCES) $(CATALOG_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(LIBUV_CFLAGS) $(LIBELF_CFLAGS) $(CFLAGS) \
@@ -61,12 +61,22 @@ $(BUILD_DIR)/test_catalog: tests/test_catalog.c $(COMMON_SOURCES) $(CATALOG_SOUR
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
 		tests/test_catalog.c $(COMMON_SOURCES) $(CATALOG_SOURCES)
 
+$(BUILD_DIR)/test_vhal_elf: tests/test_vhal_elf.c src/vhal_source.c $(COMMON_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(LIBELF_CFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
+		tests/test_vhal_elf.c src/vhal_source.c
+
+$(BUILD_DIR)/test_client_deadlines: tests/test_client_deadlines.c $(BUILD_DIR)/libroadcast_client.a $(COMMON_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
+		tests/test_client_deadlines.c $(BUILD_DIR)/libroadcast_client.a -pthread
+
 $(BUILD_DIR)/idle_clients: tests/idle_clients.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/idle_clients.c
 
-test: $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_catalog
+test: $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_catalog $(BUILD_DIR)/test_vhal_elf $(BUILD_DIR)/test_client_deadlines
 	$(BUILD_DIR)/test_protocol
 	$(BUILD_DIR)/test_catalog
+	$(BUILD_DIR)/test_vhal_elf
+	$(BUILD_DIR)/test_client_deadlines
 
 integration: all $(BUILD_DIR)/idle_clients
 	tests/catchup_integration.sh

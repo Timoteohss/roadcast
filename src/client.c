@@ -3,6 +3,7 @@
 #include "roadcast_client.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -18,6 +19,7 @@
 #include <unistd.h>
 
 #define CLIENT_READ_TIMEOUT_MS 3000
+#define CLIENT_SETUP_TIMEOUT_MS 10000
 #define CLIENT_MAX_FRAMES 65535u
 #define CLIENT_MAX_SIGNALS 100000u
 
@@ -94,20 +96,100 @@ static socklen_t fill_unix_address(struct sockaddr_un *address,
     return (socklen_t)(offsetof(struct sockaddr_un, sun_path) + length + 1);
 }
 
-static int connect_socket(const char *socket_name) {
+static int set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+        return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+static int wait_descriptor(int fd, short events, uint64_t deadline_ns) {
+    for (;;) {
+        uint64_t now = monotonic_ns();
+        if (now >= deadline_ns) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        uint64_t remaining_ns = deadline_ns - now;
+        int timeout_ms = (int)((remaining_ns + 999999ULL) / 1000000ULL);
+        if (timeout_ms <= 0) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        struct pollfd descriptor = {
+            .fd = fd,
+            .events = events,
+            .revents = 0,
+        };
+        int result = poll(&descriptor, 1, timeout_ms);
+        if (result > 0) {
+            if (events & POLLIN) {
+                if (descriptor.revents & POLLIN)
+                    return 0;
+                if (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                    errno = EIO;
+                    return -1;
+                }
+            } else if (events & POLLOUT) {
+                if (descriptor.revents & POLLOUT)
+                    return 0;
+                if (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                    errno = EIO;
+                    return -1;
+                }
+            }
+            return 0;
+        }
+        if (result < 0) {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+        errno = ETIMEDOUT;
+        return -1;
+    }
+}
+
+static int connect_socket(const char *socket_name, uint64_t deadline_ns) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0)
         return -1;
-    struct sockaddr_un address;
-    socklen_t length = fill_unix_address(&address, socket_name);
-    if (!length || connect(fd, (const struct sockaddr *)&address, length) < 0) {
+    if (set_nonblocking(fd) < 0) {
         close(fd);
         return -1;
+    }
+    struct sockaddr_un address;
+    socklen_t length = fill_unix_address(&address, socket_name);
+    if (!length) {
+        close(fd);
+        return -1;
+    }
+    int rc = connect(fd, (const struct sockaddr *)&address, length);
+    if (rc < 0) {
+        if (errno == EINPROGRESS || errno == EAGAIN) {
+            if (wait_descriptor(fd, POLLOUT, deadline_ns) < 0) {
+                close(fd);
+                return -1;
+            }
+            int so_error = 0;
+            socklen_t len = sizeof(so_error);
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &len) < 0 ||
+                so_error != 0) {
+                if (so_error)
+                    errno = so_error;
+                close(fd);
+                return -1;
+            }
+        } else {
+            close(fd);
+            return -1;
+        }
     }
     return fd;
 }
 
-static int write_all(int fd, const uint8_t *data, size_t length) {
+static int write_all(int fd, const uint8_t *data, size_t length,
+                     uint64_t deadline_ns) {
     while (length) {
         ssize_t written = send(fd, data, length, MSG_NOSIGNAL);
         if (written > 0) {
@@ -115,17 +197,33 @@ static int write_all(int fd, const uint8_t *data, size_t length) {
             length -= (size_t)written;
             continue;
         }
-        if (written < 0 && errno == EINTR)
-            continue;
+        if (written < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (wait_descriptor(fd, POLLOUT, deadline_ns) < 0)
+                    return -1;
+                continue;
+            }
+            return -1;
+        }
         return -1;
     }
     return 0;
 }
 
 static int send_message(roadcast_client_t *client, uint16_t type,
-                        const uint8_t *payload, size_t payload_length) {
+                        const uint8_t *payload, size_t payload_length,
+                        uint64_t max_deadline_ns) {
     if (payload_length > client->max_request_payload)
         return -1;
+    uint64_t op_deadline_ns =
+        monotonic_ns() + (uint64_t)CLIENT_READ_TIMEOUT_MS * 1000000ULL;
+    uint64_t deadline_ns = max_deadline_ns
+                               ? (max_deadline_ns < op_deadline_ns
+                                      ? max_deadline_ns
+                                      : op_deadline_ns)
+                               : op_deadline_ns;
     uint8_t header_bytes[ROADCAST_HEADER_SIZE];
     roadcast_header_t header = {
         .version = ROADCAST_PROTOCOL_VERSION,
@@ -136,64 +234,75 @@ static int send_message(roadcast_client_t *client, uint16_t type,
         .timestamp_ns = monotonic_ns(),
     };
     roadcast_encode_header(header_bytes, &header);
-    if (write_all(client->fd, header_bytes, sizeof(header_bytes)) < 0)
+    if (write_all(client->fd, header_bytes, sizeof(header_bytes), deadline_ns) <
+        0)
         return -1;
-    if (payload_length && write_all(client->fd, payload, payload_length) < 0)
+    if (payload_length &&
+        write_all(client->fd, payload, payload_length, deadline_ns) < 0)
         return -1;
     return 0;
 }
 
 static int read_exact(roadcast_client_t *client, uint8_t *output,
-                      size_t length) {
+                      size_t length, uint64_t deadline_ns) {
     while (length) {
-        struct pollfd descriptor = {
-            .fd = client->fd,
-            .events = POLLIN,
-            .revents = 0,
-        };
-        int result = poll(&descriptor, 1, CLIENT_READ_TIMEOUT_MS);
-        if (result <= 0) {
-            if (result < 0 && errno == EINTR)
-                continue;
-            return -1;
-        }
-        if (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL))
-            return -1;
         ssize_t count = recv(client->fd, output, length, 0);
         if (count > 0) {
             output += (size_t)count;
             length -= (size_t)count;
             continue;
         }
-        if (count < 0 && errno == EINTR)
-            continue;
+        if (count == 0) {
+            errno = EPIPE;
+            return -1;
+        }
+        if (count < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (wait_descriptor(client->fd, POLLIN, deadline_ns) < 0)
+                    return -1;
+                continue;
+            }
+            return -1;
+        }
         return -1;
     }
     return 0;
 }
 
-static int read_message(roadcast_client_t *client, roadcast_header_t *header) {
+static int read_message(roadcast_client_t *client, roadcast_header_t *header,
+                        uint64_t max_deadline_ns) {
+    uint64_t op_deadline_ns =
+        monotonic_ns() + (uint64_t)CLIENT_READ_TIMEOUT_MS * 1000000ULL;
+    uint64_t deadline_ns = max_deadline_ns
+                               ? (max_deadline_ns < op_deadline_ns
+                                      ? max_deadline_ns
+                                      : op_deadline_ns)
+                               : op_deadline_ns;
     uint8_t header_bytes[ROADCAST_HEADER_SIZE];
-    if (read_exact(client, header_bytes, sizeof(header_bytes)) < 0 ||
+    if (read_exact(client, header_bytes, sizeof(header_bytes), deadline_ns) <
+            0 ||
         roadcast_decode_header(header_bytes, header) < 0 ||
         header->version != ROADCAST_PROTOCOL_VERSION || header->flags != 0 ||
         header->payload_bytes > client->payload_capacity)
         return -1;
     if (header->payload_bytes &&
-        read_exact(client, client->payload, header->payload_bytes) < 0)
+        read_exact(client, client->payload, header->payload_bytes,
+                   deadline_ns) < 0)
         return -1;
     return 0;
 }
 
-static int request_schema(roadcast_client_t *client) {
+static int request_schema(roadcast_client_t *client, uint64_t deadline_ns) {
     uint32_t next_index = 0;
     while (next_index < client->signal_count) {
         uint8_t request[ROADCAST_SCHEMA_REQUEST_SIZE];
         roadcast_encode_index_request(request, next_index);
         roadcast_header_t header;
         if (send_message(client, ROADCAST_MSG_GET_SCHEMA, request,
-                         sizeof(request)) < 0 ||
-            read_message(client, &header) < 0 ||
+                         sizeof(request), deadline_ns) < 0 ||
+            read_message(client, &header, deadline_ns) < 0 ||
             header.type != ROADCAST_MSG_SCHEMA_CHUNK)
             return -1;
 
@@ -218,15 +327,16 @@ static int request_schema(roadcast_client_t *client) {
 }
 
 static int request_frame_snapshot(roadcast_client_t *client,
-                                  synchronization_t *sync) {
+                                  synchronization_t *sync,
+                                  uint64_t deadline_ns) {
     uint32_t next_index = 0;
     while (next_index < client->frame_count) {
         uint8_t request[ROADCAST_SCHEMA_REQUEST_SIZE];
         roadcast_encode_index_request(request, next_index);
         roadcast_header_t header;
         if (send_message(client, ROADCAST_MSG_GET_SNAPSHOT, request,
-                         sizeof(request)) < 0 ||
-            read_message(client, &header) < 0 ||
+                         sizeof(request), deadline_ns) < 0 ||
+            read_message(client, &header, deadline_ns) < 0 ||
             header.type != ROADCAST_MSG_SNAPSHOT)
             return -1;
 
@@ -256,17 +366,19 @@ static int request_frame_snapshot(roadcast_client_t *client,
 }
 
 static int request_signal_snapshot(roadcast_client_t *client,
-                                   synchronization_t *sync) {
+                                   synchronization_t *sync,
+                                   uint64_t deadline_ns) {
     uint32_t next_index = 0;
     while (next_index < client->signal_count) {
         uint8_t request[ROADCAST_SCHEMA_REQUEST_SIZE];
         roadcast_encode_index_request(request, next_index);
         roadcast_header_t header;
         if (send_message(client, ROADCAST_MSG_GET_SIGNAL_SNAPSHOT, request,
-                         sizeof(request)) < 0 ||
-            read_message(client, &header) < 0 ||
+                         sizeof(request), deadline_ns) < 0 ||
+            read_message(client, &header, deadline_ns) < 0 ||
             header.type != ROADCAST_MSG_SIGNAL_SNAPSHOT_CHUNK ||
-            header.sequence != sync->change_sequence)
+            header.sequence != sync->change_sequence ||
+            header.timestamp_ns != sync->sample_timestamp_ns)
             return -1;
 
         uint64_t sample_sequence;
@@ -384,12 +496,14 @@ static int apply_signal_batch(roadcast_client_t *client,
 }
 
 static int complete_subscription(roadcast_client_t *client,
-                                 synchronization_t *sync) {
-    if (send_message(client, ROADCAST_MSG_SUBSCRIBE_ALL, NULL, 0) < 0)
+                                 synchronization_t *sync,
+                                 uint64_t deadline_ns) {
+    if (send_message(client, ROADCAST_MSG_SUBSCRIBE_ALL, NULL, 0,
+                     deadline_ns) < 0)
         return -1;
     for (;;) {
         roadcast_header_t header;
-        if (read_message(client, &header) < 0)
+        if (read_message(client, &header, deadline_ns) < 0)
             return -1;
         if (header.type == ROADCAST_MSG_SUBSCRIBED) {
             sync->change_sequence = header.sequence;
@@ -415,8 +529,12 @@ static int initialize_synchronization(roadcast_client_t *client,
     memset(sync, 0, sizeof(*sync));
     sync->frames = calloc(client->frame_count, sizeof(*sync->frames));
     sync->signals = calloc(client->signal_count, sizeof(*sync->signals));
-    if (!sync->frames || !sync->signals)
+    if (!sync->frames || !sync->signals) {
+        free(sync->frames);
+        free(sync->signals);
+        memset(sync, 0, sizeof(*sync));
         return -1;
+    }
     return 0;
 }
 
@@ -426,10 +544,11 @@ static void destroy_synchronization(synchronization_t *sync) {
     memset(sync, 0, sizeof(*sync));
 }
 
-static int synchronize(roadcast_client_t *client, synchronization_t *sync) {
-    return request_frame_snapshot(client, sync) < 0 ||
-                   request_signal_snapshot(client, sync) < 0 ||
-                   complete_subscription(client, sync) < 0
+static int synchronize(roadcast_client_t *client, synchronization_t *sync,
+                       uint64_t deadline_ns) {
+    return request_frame_snapshot(client, sync, deadline_ns) < 0 ||
+                   request_signal_snapshot(client, sync, deadline_ns) < 0 ||
+                   complete_subscription(client, sync, deadline_ns) < 0
                ? -1
                : 0;
 }
@@ -449,10 +568,12 @@ static void commit_synchronization(roadcast_client_t *client,
 }
 
 static int resynchronize(roadcast_client_t *client) {
+    uint64_t resync_deadline_ns =
+        monotonic_ns() + (uint64_t)CLIENT_SETUP_TIMEOUT_MS * 1000000ULL;
     synchronization_t sync;
     if (initialize_synchronization(client, &sync) < 0)
         return -1;
-    int result = synchronize(client, &sync);
+    int result = synchronize(client, &sync, resync_deadline_ns);
     if (result == 0) {
         commit_synchronization(client, &sync);
         pthread_mutex_lock(&client->cache_lock);
@@ -551,7 +672,7 @@ static void *reader_thread_main(void *argument) {
     while (
         !atomic_load_explicit(&client->stop_requested, memory_order_acquire)) {
         roadcast_header_t header;
-        if (read_message(client, &header) < 0)
+        if (read_message(client, &header, 0) < 0)
             break;
         int result;
         switch (header.type) {
@@ -578,12 +699,13 @@ static void *reader_thread_main(void *argument) {
     return NULL;
 }
 
-static int perform_handshake(roadcast_client_t *client) {
+static int perform_handshake(roadcast_client_t *client, uint64_t deadline_ns) {
     uint8_t hello[8];
     size_t hello_length = roadcast_encode_hello(hello);
     roadcast_header_t header;
-    if (send_message(client, ROADCAST_MSG_HELLO, hello, hello_length) < 0 ||
-        read_message(client, &header) < 0 ||
+    if (send_message(client, ROADCAST_MSG_HELLO, hello, hello_length,
+                     deadline_ns) < 0 ||
+        read_message(client, &header, deadline_ns) < 0 ||
         header.type != ROADCAST_MSG_WELCOME)
         return -1;
 
@@ -636,11 +758,13 @@ roadcast_client_t *roadcast_client_connect(const char *socket_name,
     atomic_init(&client->stop_requested, false);
 
     int failure = ROADCAST_CLIENT_ERR_SOCKET;
-    client->fd = connect_socket(socket_name);
+    uint64_t setup_deadline_ns =
+        monotonic_ns() + (uint64_t)CLIENT_SETUP_TIMEOUT_MS * 1000000ULL;
+    client->fd = connect_socket(socket_name, setup_deadline_ns);
     if (client->fd < 0)
         goto fail;
     failure = ROADCAST_CLIENT_ERR_HANDSHAKE;
-    if (perform_handshake(client) < 0)
+    if (perform_handshake(client, setup_deadline_ns) < 0)
         goto fail;
 
     uint8_t *payload = realloc(client->payload, client->max_response_payload);
@@ -670,7 +794,7 @@ roadcast_client_t *roadcast_client_connect(const char *socket_name,
     }
 
     failure = ROADCAST_CLIENT_ERR_SCHEMA;
-    if (request_schema(client) < 0)
+    if (request_schema(client, setup_deadline_ns) < 0)
         goto fail;
 
     synchronization_t sync;
@@ -679,7 +803,7 @@ roadcast_client_t *roadcast_client_connect(const char *socket_name,
         goto fail;
     }
     failure = ROADCAST_CLIENT_ERR_SNAPSHOT;
-    if (synchronize(client, &sync) < 0) {
+    if (synchronize(client, &sync, setup_deadline_ns) < 0) {
         destroy_synchronization(&sync);
         goto fail;
     }

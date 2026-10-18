@@ -23,5 +23,8 @@ int roadcast_vhal_open(roadcast_vhal_source_t *source,
 int roadcast_vhal_read(roadcast_vhal_source_t *source,
                        roadcast_frame_t frames[ROADCAST_FRAME_COUNT]);
 void roadcast_vhal_close(roadcast_vhal_source_t *source);
+int roadcast_vhal_resolve_symbols(const char *executable,
+                                  uint64_t values[ROADCAST_FRAME_COUNT],
+                                  uint64_t *load_vaddr, uint64_t *load_offset);
 
 #endif

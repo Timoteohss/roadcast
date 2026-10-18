@@ -97,6 +97,7 @@ struct roadcast_client {
     roadcast_signal_value_t snapshot_signals[ROADCAST_SIGNAL_COUNT];
     uint64_t snapshot_sample_sequence;
     uint64_t snapshot_change_sequence;
+    uint64_t snapshot_timestamp_ns;
     uint32_t snapshot_next_frame_index;
     uint32_t snapshot_next_index;
     uint16_t catchup_frame_indices[ROADCAST_FRAME_COUNT];
@@ -566,6 +567,7 @@ static void begin_snapshot(roadcast_client_t *client) {
            sizeof(client->snapshot_signals));
     client->snapshot_sample_sequence = server->sample_sequence;
     client->snapshot_change_sequence = server->change_sequence;
+    client->snapshot_timestamp_ns = server->sample_timestamp_ns;
     client->snapshot_next_frame_index = 0;
     client->snapshot_next_index = 0;
     client->snapshot_active = 1;
@@ -597,7 +599,7 @@ static int queue_frame_snapshot_chunk(roadcast_client_t *client,
         return -1;
     int result = client_queue_message(
         client, ROADCAST_MSG_SNAPSHOT, client->snapshot_change_sequence,
-        client->server->sample_timestamp_ns, payload, length, 0);
+        client->snapshot_timestamp_ns, payload, length, 0);
     if (result < 0)
         return result;
     client->snapshot_next_frame_index += (uint32_t)count;
@@ -632,7 +634,11 @@ static void begin_catchup_round(roadcast_client_t *client) {
     client->catchup_signal_offset = 0;
     for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
         if (server->signals[i].raw != client->snapshot_signals[i].raw ||
-            server->signals[i].state != client->snapshot_signals[i].state)
+            server->signals[i].state != client->snapshot_signals[i].state ||
+            server->signals[i].first_observed_ns !=
+                client->snapshot_signals[i].first_observed_ns ||
+            server->signals[i].last_change_ns !=
+                client->snapshot_signals[i].last_change_ns)
             client->catchup_signal_indices[client->catchup_signal_count++] = i;
     }
     memcpy(client->snapshot_frames, server->frames,
@@ -758,7 +764,7 @@ static int queue_signal_snapshot_chunk(roadcast_client_t *client,
         return -1;
     int result = client_queue_message(
         client, ROADCAST_MSG_SIGNAL_SNAPSHOT_CHUNK,
-        client->snapshot_change_sequence, client->server->sample_timestamp_ns,
+        client->snapshot_change_sequence, client->snapshot_timestamp_ns,
         payload, length, 0);
     if (result < 0)
         return result;
@@ -1032,6 +1038,42 @@ static size_t active_client_count(const roadcast_server_t *server) {
     return count;
 }
 
+static void reconcile_signal_timestamps(roadcast_signal_value_t *latest,
+                                        const roadcast_signal_value_t *canonical,
+                                        uint64_t timestamp_ns) {
+    for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
+        if (latest[i].state == ROADCAST_OBSERVATION_UNAVAILABLE) {
+            if (canonical[i].first_observed_ns != 0) {
+                latest[i].first_observed_ns = canonical[i].first_observed_ns;
+                latest[i].last_change_ns = canonical[i].last_change_ns;
+                latest[i].raw = canonical[i].raw;
+                latest[i].physical = canonical[i].physical;
+            } else {
+                latest[i].first_observed_ns = 0;
+                latest[i].last_change_ns = 0;
+            }
+            continue;
+        }
+        if (canonical[i].first_observed_ns != 0) {
+            latest[i].first_observed_ns = canonical[i].first_observed_ns;
+            if (latest[i].raw == canonical[i].raw &&
+                latest[i].state == canonical[i].state) {
+                latest[i].last_change_ns = canonical[i].last_change_ns;
+            } else {
+                latest[i].last_change_ns = timestamp_ns;
+            }
+        } else {
+            if (latest[i].state == ROADCAST_OBSERVATION_VALID) {
+                latest[i].first_observed_ns = timestamp_ns;
+                latest[i].last_change_ns = timestamp_ns;
+            } else {
+                latest[i].first_observed_ns = 0;
+                latest[i].last_change_ns = 0;
+            }
+        }
+    }
+}
+
 static void distribute_latest_sample(roadcast_server_t *server) {
     roadcast_frame_t latest[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t latest_signals[ROADCAST_SIGNAL_COUNT];
@@ -1041,6 +1083,7 @@ static void distribute_latest_sample(roadcast_server_t *server) {
     if (sequence <= server->sample_sequence)
         return;
     roadcast_decode_signals(latest, latest_signals);
+    reconcile_signal_timestamps(latest_signals, server->signals, timestamp_ns);
 
     uint64_t elapsed_ticks = sequence - server->sample_sequence;
     uint16_t changed[ROADCAST_FRAME_COUNT];
@@ -1055,7 +1098,11 @@ static void distribute_latest_sample(roadcast_server_t *server) {
     size_t changed_signal_count = 0;
     for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
         if (latest_signals[i].raw != server->signals[i].raw ||
-            latest_signals[i].state != server->signals[i].state)
+            latest_signals[i].state != server->signals[i].state ||
+            latest_signals[i].first_observed_ns !=
+                server->signals[i].first_observed_ns ||
+            latest_signals[i].last_change_ns !=
+                server->signals[i].last_change_ns)
             changed_signals[changed_signal_count++] = i;
     }
 
@@ -1381,6 +1428,15 @@ int main(int argc, char **argv) {
     sampler_read_latest(&server.sampler, server.frames, &server.sample_sequence,
                         &server.sample_timestamp_ns);
     roadcast_decode_signals(server.frames, server.signals);
+    for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
+        if (server.signals[i].state == ROADCAST_OBSERVATION_VALID) {
+            server.signals[i].first_observed_ns = server.sample_timestamp_ns;
+            server.signals[i].last_change_ns = server.sample_timestamp_ns;
+        } else {
+            server.signals[i].first_observed_ns = 0;
+            server.signals[i].last_change_ns = 0;
+        }
+    }
     server.stats.source_errors_at_start = atomic_load_explicit(
         &server.sampler.source_errors, memory_order_relaxed);
     server.stats.fallback_batches_at_start = atomic_load_explicit(
