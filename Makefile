@@ -81,15 +81,21 @@ $(BUILD_DIR)/test_client_deadlines: tests/test_client_deadlines.c $(BUILD_DIR)/l
 $(BUILD_DIR)/idle_clients: tests/idle_clients.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/idle_clients.c
 
-test: $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_catalog $(BUILD_DIR)/test_vhal_elf $(BUILD_DIR)/test_client_deadlines
+$(BUILD_DIR)/test_distribution: tests/test_distribution.c src/roadcastd.c src/vhal_source.c $(COMMON_SOURCES) $(CATALOG_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(LIBUV_CFLAGS) $(LIBELF_CFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
+		tests/test_distribution.c src/vhal_source.c $(COMMON_SOURCES) $(CATALOG_SOURCES) $(LIBUV_LIBS) -pthread
+
+test: $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_catalog $(BUILD_DIR)/test_vhal_elf $(BUILD_DIR)/test_client_deadlines $(BUILD_DIR)/test_distribution
 	$(BUILD_DIR)/test_protocol
 	$(BUILD_DIR)/test_catalog
 	$(BUILD_DIR)/test_vhal_elf
 	$(BUILD_DIR)/test_client_deadlines
+	$(BUILD_DIR)/test_distribution
 
 integration: all $(BUILD_DIR)/idle_clients
 	tests/catchup_integration.sh
 	tests/integration.sh
+	bash tests/dense_integration.sh
 
 android:
 	scripts/build-android.sh

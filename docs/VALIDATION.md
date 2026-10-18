@@ -260,3 +260,28 @@ The same suite passes with UndefinedBehaviorSanitizer enabled. AddressSanitizer
 could not be evaluated on the current macOS host because the Clang ASan
 runtime deadlocked inside `AsanInitInternal` before entering the test program's
 `main()`.
+
+## Dense Updates and No-Subscriber Distribution
+
+`make integration` also runs a dense fake source at 1 and 60 Hz. Unlike the
+incrementing fake source, `--fake-dense` alternates every source bit each tick,
+so all 111 frames and all 815 signals change together. Concurrent CLI and SDK
+readers must remain connected with zero resynchronizations, gaps or drops.
+The existing slow-reader integration still checks that actual backlog causes
+bounded resynchronization without interfering with other clients.
+
+A complete dense update needs two raw-frame messages and seventeen signal
+messages. The default queue is calculated from those ceilings plus one
+heartbeat (currently 20 slots). It does not grow with runtime backlog.
+`--client-queue-slots` can deliberately lower that limit to exercise overflow
+and catch-up behavior. The broadcast scratch arrays use the same calculated
+ceilings, so catalog changes cannot silently truncate a batch at a magic cap.
+
+`make test` checks that canonical raw/decoded values, validity, frame timestamps
+and sample/change sequences continue advancing without subscribers, with
+setup-only clients, and with clients awaiting resynchronization. None of
+these cases may serialize a broadcast chunk. The ten-second daemon statistics
+expose `serialized_chunks` for observing this behavior without per-tick logs.
+
+These are host functional checks. They do not measure vehicle power savings
+or alter the acquisition rate, protocol, firmware or suspension policy.

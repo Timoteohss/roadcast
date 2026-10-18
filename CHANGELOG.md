@@ -10,11 +10,22 @@ schema. A release line names all three.
 
 ### Added
 
+- Dense fake-source integration coverage at 1 and 60 Hz, including concurrent
+  CLI/SDK readers, and canonical-state tests without delta subscribers.
+- The ten-second diagnostic counters include `serialized_chunks`, counted
+  once per encoded broadcast chunk rather than once per recipient.
+
 - GitHub Actions now publishes `RELEASE_MANIFEST.json` with Android target,
   protocol/schema compatibility, source commit, and hashes for the daemon,
   CLI, and shared client library.
 
 ### Changed
+
+- Size broadcast scratch buffers and the default bounded client queue from
+  the generated catalog. The current worst-case update needs 19 messages;
+  the queue now holds those messages plus one heartbeat, instead of 16.
+- Skip broadcast serialization when no active delta subscriber can receive
+  it. Canonical values, observation timestamps and sequences keep advancing.
 
 - Eight climate and drivetrain state signals are now calibrated. Their decode
   is the identity, `scale=1` and `offset=0`, because each one is a state or a
