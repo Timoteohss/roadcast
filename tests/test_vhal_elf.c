@@ -1,6 +1,16 @@
 #define _GNU_SOURCE
-#include <assert.h>
+#if defined(__has_include)
+#if __has_include(<elf.h>)
 #include <elf.h>
+#elif __has_include(<libelf/libelf.h>)
+#include <libelf/libelf.h>
+#else
+#error "An ELF header implementation is required"
+#endif
+#else
+#include <elf.h>
+#endif
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>

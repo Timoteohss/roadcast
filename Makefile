@@ -26,10 +26,19 @@ all: $(BUILD_DIR)/roadcastd $(BUILD_DIR)/roadcastctl \
 $(BUILD_DIR):
 	mkdir -p $@
 
-$(CATALOG_GENERATED) &: data/dbc.json scripts/generate-catalog.py
+$(BUILD_DIR)/.catalog.stamp: data/dbc.json scripts/generate-catalog.py | $(BUILD_DIR)
 	scripts/generate-catalog.py
+	@touch $@
 
-generate: $(CATALOG_GENERATED)
+$(CATALOG_GENERATED): $(BUILD_DIR)/.catalog.stamp
+	@if [ ! -f $@ ]; then \
+		rm -f $(BUILD_DIR)/.catalog.stamp; \
+		$(MAKE) $(BUILD_DIR)/.catalog.stamp; \
+	fi
+
+generate: | $(BUILD_DIR)
+	scripts/generate-catalog.py
+	@touch $(BUILD_DIR)/.catalog.stamp
 
 $(BUILD_DIR)/roadcastd: src/roadcastd.c src/vhal_source.c $(COMMON_SOURCES) $(CATALOG_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(LIBUV_CFLAGS) $(LIBELF_CFLAGS) $(CFLAGS) \
