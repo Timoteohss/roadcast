@@ -115,16 +115,16 @@ static int find_mapping_base(pid_t pid, const char *executable,
 
 static int checked_table(size_t file_size, uint64_t offset, uint64_t count,
                          size_t element_size) {
-    if (offset > file_size)
+    if (element_size == 0 || offset > file_size)
         return -1;
     if (count > (file_size - offset) / element_size)
         return -1;
     return 0;
 }
 
-static int resolve_symbols(const char *executable,
-                           uint64_t values[ROADCAST_FRAME_COUNT],
-                           uint64_t *load_vaddr, uint64_t *load_offset) {
+int roadcast_vhal_resolve_symbols(const char *executable,
+                                  uint64_t values[ROADCAST_FRAME_COUNT],
+                                  uint64_t *load_vaddr, uint64_t *load_offset) {
     int fd = open(executable, O_RDONLY | O_CLOEXEC);
     if (fd < 0)
         return -1;
@@ -142,71 +142,115 @@ static int resolve_symbols(const char *executable,
 
     int result = -1;
     if (file_size < sizeof(Elf64_Ehdr) || memcmp(map, ELFMAG, SELFMAG) != 0 ||
-        map[EI_CLASS] != ELFCLASS64)
+        map[EI_CLASS] != ELFCLASS64 || map[EI_DATA] != ELFDATA2LSB ||
+        map[EI_VERSION] != EV_CURRENT) {
+        errno = ENOEXEC;
         goto done;
+    }
 
-    const Elf64_Ehdr *header = (const Elf64_Ehdr *)map;
-    if (checked_table(file_size, header->e_phoff, header->e_phnum,
+    Elf64_Ehdr header;
+    memcpy(&header, map, sizeof(header));
+    if (header.e_version != EV_CURRENT ||
+        header.e_ehsize != sizeof(Elf64_Ehdr) ||
+        (header.e_phnum > 0 && header.e_phentsize != sizeof(Elf64_Phdr)) ||
+        (header.e_shnum > 0 && header.e_shentsize != sizeof(Elf64_Shdr))) {
+        errno = ENOEXEC;
+        goto done;
+    }
+
+    if (checked_table(file_size, header.e_phoff, header.e_phnum,
                       sizeof(Elf64_Phdr)) < 0 ||
-        checked_table(file_size, header->e_shoff, header->e_shnum,
-                      sizeof(Elf64_Shdr)) < 0)
+        checked_table(file_size, header.e_shoff, header.e_shnum,
+                      sizeof(Elf64_Shdr)) < 0) {
+        errno = ENOEXEC;
         goto done;
+    }
 
-    const Elf64_Phdr *programs = (const Elf64_Phdr *)(map + header->e_phoff);
     uint64_t best_vaddr = UINT64_MAX;
     uint64_t best_offset = 0;
-    for (uint16_t i = 0; i < header->e_phnum; i++) {
-        if (programs[i].p_type == PT_LOAD && programs[i].p_vaddr < best_vaddr) {
-            best_vaddr = programs[i].p_vaddr;
-            best_offset = programs[i].p_offset;
+    for (uint16_t i = 0; i < header.e_phnum; i++) {
+        Elf64_Phdr program;
+        memcpy(&program, map + header.e_phoff + i * sizeof(Elf64_Phdr),
+               sizeof(Elf64_Phdr));
+        if (program.p_type == PT_LOAD && program.p_vaddr < best_vaddr) {
+            best_vaddr = program.p_vaddr;
+            best_offset = program.p_offset;
         }
     }
-    if (best_vaddr == UINT64_MAX)
+    if (best_vaddr == UINT64_MAX) {
+        errno = ENOEXEC;
         goto done;
+    }
 
-    const Elf64_Shdr *sections = (const Elf64_Shdr *)(map + header->e_shoff);
-    const Elf64_Shdr *symbols = NULL;
-    for (uint16_t i = 0; i < header->e_shnum; i++) {
-        if (sections[i].sh_type == SHT_SYMTAB) {
-            symbols = &sections[i];
+    Elf64_Shdr symbols_shdr;
+    int found_symbols = 0;
+    for (uint16_t i = 0; i < header.e_shnum; i++) {
+        Elf64_Shdr section;
+        memcpy(&section, map + header.e_shoff + i * sizeof(Elf64_Shdr),
+               sizeof(Elf64_Shdr));
+        if (section.sh_type == SHT_SYMTAB) {
+            symbols_shdr = section;
+            found_symbols = 1;
             break;
         }
     }
-    if (!symbols) {
-        for (uint16_t i = 0; i < header->e_shnum; i++) {
-            if (sections[i].sh_type == SHT_DYNSYM) {
-                symbols = &sections[i];
+    if (!found_symbols) {
+        for (uint16_t i = 0; i < header.e_shnum; i++) {
+            Elf64_Shdr section;
+            memcpy(&section, map + header.e_shoff + i * sizeof(Elf64_Shdr),
+                   sizeof(Elf64_Shdr));
+            if (section.sh_type == SHT_DYNSYM) {
+                symbols_shdr = section;
+                found_symbols = 1;
                 break;
             }
         }
     }
-    if (!symbols || symbols->sh_link >= header->e_shnum ||
-        checked_table(file_size, symbols->sh_offset, symbols->sh_size, 1) < 0)
+    if (!found_symbols || symbols_shdr.sh_link >= header.e_shnum ||
+        symbols_shdr.sh_entsize != sizeof(Elf64_Sym) ||
+        symbols_shdr.sh_size % sizeof(Elf64_Sym) != 0 ||
+        checked_table(file_size, symbols_shdr.sh_offset, symbols_shdr.sh_size,
+                      1) < 0) {
+        errno = ENOEXEC;
         goto done;
+    }
 
-    const Elf64_Shdr *strings = &sections[symbols->sh_link];
-    if (checked_table(file_size, strings->sh_offset, strings->sh_size, 1) < 0)
+    Elf64_Shdr strings_shdr;
+    memcpy(&strings_shdr,
+           map + header.e_shoff + symbols_shdr.sh_link * sizeof(Elf64_Shdr),
+           sizeof(Elf64_Shdr));
+    if (strings_shdr.sh_type != SHT_STRTAB ||
+        checked_table(file_size, strings_shdr.sh_offset, strings_shdr.sh_size,
+                      1) < 0) {
+        errno = ENOEXEC;
         goto done;
+    }
 
     memset(values, 0, ROADCAST_FRAME_COUNT * sizeof(values[0]));
-    const char *string_table = (const char *)(map + strings->sh_offset);
-    const Elf64_Sym *symbol_table =
-        (const Elf64_Sym *)(map + symbols->sh_offset);
-    size_t symbol_count = symbols->sh_size / sizeof(Elf64_Sym);
+    const char *string_table = (const char *)(map + strings_shdr.sh_offset);
+    size_t symbol_count = symbols_shdr.sh_size / sizeof(Elf64_Sym);
     size_t found = 0;
     for (size_t symbol_index = 0;
          symbol_index < symbol_count && found < ROADCAST_FRAME_COUNT;
          symbol_index++) {
-        if (symbol_table[symbol_index].st_name >= strings->sh_size)
+        Elf64_Sym sym;
+        memcpy(&sym,
+               map + symbols_shdr.sh_offset + symbol_index * sizeof(Elf64_Sym),
+               sizeof(Elf64_Sym));
+        if (sym.st_shndx == SHN_UNDEF || sym.st_name >= strings_shdr.sh_size)
             continue;
-        const char *name = string_table + symbol_table[symbol_index].st_name;
+        const char *name = string_table + sym.st_name;
+        size_t max_name_len = strings_shdr.sh_size - sym.st_name;
+        const char *nul = memchr(name, '\0', max_name_len);
+        if (!nul)
+            continue;
         for (size_t frame_index = 0; frame_index < ROADCAST_FRAME_COUNT;
              frame_index++) {
             char expected[24];
             snprintf(expected, sizeof(expected), "MMI_Rx_%03X",
                      ROADCAST_CAN_IDS[frame_index]);
             if (!values[frame_index] && strcmp(name, expected) == 0) {
-                values[frame_index] = symbol_table[symbol_index].st_value;
+                values[frame_index] = sym.st_value;
                 found++;
                 break;
             }
@@ -254,8 +298,8 @@ int roadcast_vhal_open(roadcast_vhal_source_t *source,
     uint64_t load_vaddr;
     uint64_t load_offset;
     uint64_t map_base;
-    if (resolve_symbols(executable, symbol_values, &load_vaddr, &load_offset) <
-        0)
+    if (roadcast_vhal_resolve_symbols(executable, symbol_values, &load_vaddr,
+                                      &load_offset) < 0)
         return -1;
     if (find_mapping_base(source->pid, executable, load_offset, &map_base) <
             0 &&

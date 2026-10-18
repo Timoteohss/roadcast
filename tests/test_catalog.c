@@ -478,9 +478,59 @@ static void test_schema_round_trip(void) {
     assert(strcmp(decoded[0].name, ROADCAST_SIGNALS[0].name) == 0);
 }
 
+static void test_signal_timestamp_decoupling(void) {
+    roadcast_signal_value_t canonical[ROADCAST_SIGNAL_COUNT];
+    memset(canonical, 0, sizeof(canonical));
+
+    /* Initialize canonical signal 0 as valid at t=1000 */
+    canonical[0].state = ROADCAST_OBSERVATION_VALID;
+    canonical[0].raw = 10;
+    canonical[0].physical = 10.0;
+    canonical[0].first_observed_ns = 1000;
+    canonical[0].last_change_ns = 1000;
+
+    /* Initialize canonical signal 1 as valid at t=1000 */
+    canonical[1].state = ROADCAST_OBSERVATION_VALID;
+    canonical[1].raw = 20;
+    canonical[1].physical = 20.0;
+    canonical[1].first_observed_ns = 1000;
+    canonical[1].last_change_ns = 1000;
+
+    /* Next sample at t=2000: signal 0 changes to raw=15, signal 1 remains raw=20 */
+    roadcast_signal_value_t latest[ROADCAST_SIGNAL_COUNT];
+    memset(latest, 0, sizeof(latest));
+    latest[0].state = ROADCAST_OBSERVATION_VALID;
+    latest[0].raw = 15;
+    latest[0].physical = 15.0;
+
+    latest[1].state = ROADCAST_OBSERVATION_VALID;
+    latest[1].raw = 20;
+    latest[1].physical = 20.0;
+
+    /* Reconcile at t=2000 */
+    for (uint32_t i = 0; i < 2; i++) {
+        if (canonical[i].first_observed_ns != 0) {
+            latest[i].first_observed_ns = canonical[i].first_observed_ns;
+            if (latest[i].raw == canonical[i].raw &&
+                latest[i].state == canonical[i].state) {
+                latest[i].last_change_ns = canonical[i].last_change_ns;
+            } else {
+                latest[i].last_change_ns = 2000;
+            }
+        }
+    }
+
+    assert(latest[0].first_observed_ns == 1000);
+    assert(latest[0].last_change_ns == 2000); /* Changed! */
+
+    assert(latest[1].first_observed_ns == 1000);
+    assert(latest[1].last_change_ns == 1000); /* Preserved! Did not advance! */
+}
+
 int main(void) {
     test_catalog_identity();
     test_decoding_and_invalid_flag();
+    test_signal_timestamp_decoupling();
     test_calibrated_obc_input_voltage();
     test_calibrated_obc_input_current();
     test_calibrated_vehicle_speed();
