@@ -285,3 +285,27 @@ expose `serialized_chunks` for observing this behavior without per-tick logs.
 
 These are host functional checks. They do not measure vehicle power savings
 or alter the acquisition rate, protocol, firmware or suspension policy.
+
+## 2026-10-18: Dense-Broadcast Fix on Android ARM64/API 28
+
+Commit `74fd390` was validated on IHU629G using temporary binaries and
+separate abstract sockets. The existing production daemon (PID 4861) was
+preserved throughout. No firmware, boot, Wi-Fi or suspension setting changed.
+
+The real-source run resolved 111/111 frames from VHAL PID 294 at 59.9–60 Hz.
+The no-client statistics window recorded zero serialized chunks despite
+approximately 5.92 changed frames per sample. With two concurrent CLI/SDK
+clients, serialization resumed (332 chunks in the next ten-second window).
+Both clients finished without gaps, resynchronizations or drops; the daemon
+reported zero read errors, fallback batches, coalesced samples or queue drops.
+The SOC SDK read was observed/valid and calibrated (55.0%).
+
+A separate synthetic dense run on the same head unit alternated all source
+bits at 60 Hz. Concurrent CLI/SDK clients ran for five seconds without gaps,
+resynchronizations or drops. Synthetic signal values are test stimuli and
+must not be interpreted as vehicle measurements.
+
+All temporary processes exited and the test directory/binaries were removed.
+The original daemon retained PID 4861. No experimental suspension blocker
+remained active. This short functional run does not establish electrical
+power savings or long-term reliability.
