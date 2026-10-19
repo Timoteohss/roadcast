@@ -51,6 +51,7 @@ COMMON_FLAGS=(
   -o "$OUT_DIR/roadcastd" \
   "$ROOT/src/roadcastd.c" \
   "$ROOT/src/vhal_source.c" \
+  "$ROOT/src/source_session.c" \
   "$ROOT/src/protocol.c" \
   "$ROOT/src/catalog.c" \
   "$ROOT/src/catalog_generated.c" \

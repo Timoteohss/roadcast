@@ -22,6 +22,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 static pid_t find_pid(const char *needle) {
@@ -54,10 +55,7 @@ static pid_t find_pid(const char *needle) {
         if (length <= 0)
             continue;
 
-        for (ssize_t i = 0; i < length; i++) {
-            if (command[i] == '\0')
-                command[i] = ' ';
-        }
+        /* Match argv[0], not a shell or client merely mentioning the target. */
         command[length] = '\0';
         if (strstr(command, needle)) {
             found = (pid_t)atoi(entry->d_name);
@@ -272,11 +270,78 @@ static int open_memory_fd(pid_t pid) {
     return open(path, O_RDONLY | O_CLOEXEC);
 }
 
+static int read_start_time(int fd, uint64_t *start_time) {
+    char stat_text[2048];
+    ssize_t length;
+    do {
+        length = pread(fd, stat_text, sizeof(stat_text) - 1, 0);
+    } while (length < 0 && errno == EINTR);
+    if (length <= 0) {
+        if (length == 0)
+            errno = ESRCH;
+        return -1;
+    }
+    stat_text[length] = '\0';
+    /* comm may contain spaces and parentheses; fields start after its last ). */
+    char *cursor = strrchr(stat_text, ')');
+    if (!cursor) {
+        errno = EINVAL;
+        return -1;
+    }
+    cursor++;
+    for (unsigned int field = 3; field < 22; field++) {
+        while (*cursor == ' ')
+            cursor++;
+        if (!*cursor) {
+            errno = EINVAL;
+            return -1;
+        }
+        while (*cursor && *cursor != ' ')
+            cursor++;
+    }
+    while (*cursor == ' ')
+        cursor++;
+    char *end;
+    errno = 0;
+    unsigned long long value = strtoull(cursor, &end, 10);
+    if (errno || end == cursor || (*end != ' ' && *end != '\n')) {
+        errno = EINVAL;
+        return -1;
+    }
+    *start_time = (uint64_t)value;
+    return 0;
+}
+
+static int verify_identity(const roadcast_vhal_source_t *source) {
+    uint64_t start_time;
+    if (source->identity_fd < 0 ||
+        read_start_time(source->identity_fd, &start_time) < 0 ||
+        start_time != source->start_time_ticks) {
+        errno = ESRCH;
+        return -1;
+    }
+    return 0;
+}
+
+static int unavailable(roadcast_frame_t frames[ROADCAST_FRAME_COUNT]) {
+    for (size_t i = 0; i < ROADCAST_FRAME_COUNT; i++) {
+        frames[i].can_id = ROADCAST_CAN_IDS[i];
+        frames[i].state = ROADCAST_OBSERVATION_UNAVAILABLE;
+        memset(frames[i].data, 0, sizeof(frames[i].data));
+    }
+    return -1;
+}
+
 static int read_one(const roadcast_vhal_source_t *source, uint64_t address,
                     uint8_t data[8]) {
     if (source->mem_fd < 0)
         return -1;
-    ssize_t count = pread(source->mem_fd, data, 8, (off_t)address);
+    ssize_t count;
+    do {
+        count = pread(source->mem_fd, data, 8, (off_t)address);
+    } while (count < 0 && errno == EINTR);
+    if (count >= 0 && count != 8)
+        errno = EIO;
     return count == 8 ? 0 : -1;
 }
 
@@ -284,15 +349,23 @@ int roadcast_vhal_open(roadcast_vhal_source_t *source,
                        const char *process_name) {
     memset(source, 0, sizeof(*source));
     source->mem_fd = -1;
+    source->identity_fd = -1;
     source->pid = find_pid(process_name);
     if (source->pid < 0) {
         errno = ESRCH;
         return -1;
     }
 
+    char identity_path[64];
+    snprintf(identity_path, sizeof(identity_path), "/proc/%d/stat", source->pid);
+    source->identity_fd = open(identity_path, O_RDONLY | O_CLOEXEC);
+    if (source->identity_fd < 0 ||
+        read_start_time(source->identity_fd, &source->start_time_ticks) < 0)
+        goto fail;
+
     char executable[4096];
     if (read_executable_path(source->pid, executable, sizeof(executable)) < 0)
-        return -1;
+        goto fail;
 
     uint64_t symbol_values[ROADCAST_FRAME_COUNT];
     uint64_t load_vaddr;
@@ -300,20 +373,19 @@ int roadcast_vhal_open(roadcast_vhal_source_t *source,
     uint64_t map_base;
     if (roadcast_vhal_resolve_symbols(executable, symbol_values, &load_vaddr,
                                       &load_offset) < 0)
-        return -1;
+        goto fail;
     if (find_mapping_base(source->pid, executable, load_offset, &map_base) <
             0 &&
         find_mapping_base(source->pid, executable, 0, &map_base) < 0)
-        return -1;
+        goto fail;
 
     source->local_iov =
         calloc(ROADCAST_FRAME_COUNT, sizeof(*source->local_iov));
     source->remote_iov =
         calloc(ROADCAST_FRAME_COUNT, sizeof(*source->remote_iov));
     if (!source->local_iov || !source->remote_iov) {
-        roadcast_vhal_close(source);
         errno = ENOMEM;
-        return -1;
+        goto fail;
     }
 
     uint64_t bias = map_base - load_vaddr;
@@ -327,12 +399,20 @@ int roadcast_vhal_open(roadcast_vhal_source_t *source,
         source->resolved_count++;
     }
     if (!source->resolved_count) {
-        roadcast_vhal_close(source);
         errno = ENOENT;
-        return -1;
+        goto fail;
     }
     source->mem_fd = open_memory_fd(source->pid);
+    if (verify_identity(source) < 0)
+        goto fail;
     return 0;
+
+fail: {
+    int saved_errno = errno;
+    roadcast_vhal_close(source);
+    errno = saved_errno;
+    return -1;
+}
 }
 
 int roadcast_vhal_read(roadcast_vhal_source_t *source,
@@ -353,31 +433,57 @@ int roadcast_vhal_read(roadcast_vhal_source_t *source,
     }
 
 #if defined(__linux__) || defined(__ANDROID__)
-    ssize_t expected = (ssize_t)(resolved * 8);
-    if (process_vm_readv(source->pid, source->local_iov, resolved,
-                         source->remote_iov, resolved, 0) == expected)
-        return 0;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    uint64_t now_ns = (uint64_t)now.tv_sec * UINT64_C(1000000000) + now.tv_nsec;
+    if (now_ns >= source->vm_readv_retry_ns) {
+        ssize_t count;
+        do {
+            count = process_vm_readv(source->pid, source->local_iov, resolved,
+                                     source->remote_iov, resolved, 0);
+        } while (count < 0 && errno == EINTR);
+        if (count == (ssize_t)(resolved * 8))
+            return verify_identity(source) < 0 ? unavailable(frames) : 0;
+        if (count < 0 && errno == ESRCH)
+            return unavailable(frames);
+        if (count < 0 && errno == ENOSYS)
+            source->vm_readv_retry_ns = UINT64_MAX;
+        else if (count < 0 && (errno == EPERM || errno == EACCES))
+            source->vm_readv_retry_ns = now_ns + UINT64_C(30000000000);
+    }
 #endif
 
     if (source->mem_fd < 0)
         source->mem_fd = open_memory_fd(source->pid);
-    int failures = 0;
+    if (source->mem_fd < 0)
+        return unavailable(frames);
+    int failure_errno = 0;
     for (size_t i = 0; i < ROADCAST_FRAME_COUNT; i++) {
         if (source->addresses[i] &&
             read_one(source, source->addresses[i], frames[i].data) < 0) {
             memset(frames[i].data, 0, sizeof(frames[i].data));
             frames[i].state = ROADCAST_OBSERVATION_UNAVAILABLE;
-            failures++;
+            if (!failure_errno)
+                failure_errno = errno;
         }
     }
-    return failures ? -1 : 1;
+    if (verify_identity(source) < 0)
+        return unavailable(frames);
+    if (failure_errno) {
+        errno = failure_errno;
+        return -1;
+    }
+    return 1;
 }
 
 void roadcast_vhal_close(roadcast_vhal_source_t *source) {
     if (source->mem_fd >= 0)
         close(source->mem_fd);
+    if (source->identity_fd >= 0)
+        close(source->identity_fd);
     free(source->local_iov);
     free(source->remote_iov);
     memset(source, 0, sizeof(*source));
     source->mem_fd = -1;
+    source->identity_fd = -1;
 }

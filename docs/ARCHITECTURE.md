@@ -77,6 +77,34 @@ The initial target rate is 60 Hz. This rate is configurable at runtime. The rate
 defines Roadcast's observation cadence. It does not promise that every ECU or
 CAN frame will produce new values at 60 Hz.
 
+The source session owns process discovery and recovery. If the VHAL is absent
+at startup, or a read fails, the daemon keeps the socket and connected clients
+alive with an unavailable source. Memory reads and process discovery pause
+until an exponential retry deadline (250 ms through 30 s). A successful read
+resets that delay; merely opening a source does not. Sampler ticks and protocol
+heartbeats continue while unavailable, so their age alone does not imply fresh
+vehicle data. Clients must check the source and observation states.
+
+Source discovery matches the configured substring only against `argv[0]`.
+A retained `/proc/PID/stat` descriptor identifies the original process, and its
+start-time field is checked after each batch before publishing bytes. If a
+numeric PID is reused, the old identity handle cannot validate the new process.
+This adds one small stat read per successful batch. It does not detect an
+in-place `exec` with an unchanged process identity; ordinary VHAL exit/restart
+is the supported recovery case.
+
+On recovery, a new source establishes a fresh raw-frame baseline. Cached
+observations are not promoted to valid simply because the new source opens;
+frames must change again to become observed. Failed batches are wholly marked
+unavailable, although the canonical cache may retain earlier bytes as history.
+
+When `process_vm_readv` is unsupported, the session uses `/proc/PID/mem`
+without retrying the unsupported syscall until a source reopen. Permission
+failures use a 30-second capability cooldown instead. A working fallback still
+samples at the configured rate and is reported as degraded; it can require
+one `pread` per resolved frame. Recovery does not turn that successful fallback
+into a low-rate mode, change Wi-Fi, or acquire a wake lock.
+
 ### 2. Decoding
 
 Each sample can produce three classes of entries:
@@ -235,6 +263,7 @@ roadcast/
 |   +-- roadcastctl.c
 |   +-- roadcastd.c
 |   +-- vhal_source.c
+|   +-- source_session.c
 +-- tests/
     +-- integration.sh
     +-- test_protocol.c

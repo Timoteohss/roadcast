@@ -260,3 +260,85 @@ The same suite passes with UndefinedBehaviorSanitizer enabled. AddressSanitizer
 could not be evaluated on the current macOS host because the Clang ASan
 runtime deadlocked inside `AsanInitInternal` before entering the test program's
 `main()`.
+
+## Dense Updates and No-Subscriber Distribution
+
+`make integration` also runs a dense fake source at 1 and 60 Hz. Unlike the
+incrementing fake source, `--fake-dense` alternates every source bit each tick,
+so all 111 frames and all 815 signals change together. Concurrent CLI and SDK
+readers must remain connected with zero resynchronizations, gaps or drops.
+The existing slow-reader integration still checks that actual backlog causes
+bounded resynchronization without interfering with other clients.
+
+A complete dense update needs two raw-frame messages and seventeen signal
+messages. The default queue is calculated from those ceilings plus one
+heartbeat (currently 20 slots). It does not grow with runtime backlog.
+`--client-queue-slots` can deliberately lower that limit to exercise overflow
+and catch-up behavior. The broadcast scratch arrays use the same calculated
+ceilings, so catalog changes cannot silently truncate a batch at a magic cap.
+
+`make test` checks that canonical raw/decoded values, validity, frame timestamps
+and sample/change sequences continue advancing without subscribers, with
+setup-only clients, and with clients awaiting resynchronization. None of
+these cases may serialize a broadcast chunk. The ten-second daemon statistics
+expose `serialized_chunks` for observing this behavior without per-tick logs.
+
+These are host functional checks. They do not measure vehicle power savings
+or alter the acquisition rate, protocol, firmware or suspension policy.
+
+## 2026-10-18: Dense-Broadcast Fix on Android ARM64/API 28
+
+Commit `74fd390` was validated on IHU629G using temporary binaries and
+separate abstract sockets. The existing production daemon (PID 4861) was
+preserved throughout. No firmware, boot, Wi-Fi or suspension setting changed.
+
+The real-source run resolved 111/111 frames from VHAL PID 294 at 59.9–60 Hz.
+The no-client statistics window recorded zero serialized chunks despite
+approximately 5.92 changed frames per sample. With two concurrent CLI/SDK
+clients, serialization resumed (332 chunks in the next ten-second window).
+Both clients finished without gaps, resynchronizations or drops; the daemon
+reported zero read errors, fallback batches, coalesced samples or queue drops.
+The SOC SDK read was observed/valid and calibrated (55.0%).
+
+A separate synthetic dense run on the same head unit alternated all source
+bits at 60 Hz. Concurrent CLI/SDK clients ran for five seconds without gaps,
+resynchronizations or drops. Synthetic signal values are test stimuli and
+must not be interpreted as vehicle measurements.
+
+All temporary processes exited and the test directory/binaries were removed.
+The original daemon retained PID 4861. No experimental suspension blocker
+remained active. This short functional run does not establish electrical
+power savings or long-term reliability.
+
+## Source Recovery
+
+`make test` covers exponential source retry deadlines using an injected backend
+and clock. Waiting ticks perform no source I/O, delay is capped at 30 s, only
+a successful read resets it, generation changes on reopen, and failed partial
+reads are discarded. Successful degraded reads do not trigger reconnection.
+
+On Linux/Android, `test_vhal_source` spawns disposable executable fixtures
+exporting one known CAN-buffer symbol. It checks real symbol/address discovery,
+vectored and fallback reads, permission cooldown, unsupported-syscall caching,
+interruption retry, retained error codes, start-time mismatch, and rejection of
+a readable replacement PID with the old process's identity descriptor. A
+decoy mentioning the target only in its arguments must not match discovery.
+
+`make integration` additionally runs `recovery_integration.sh` on Linux. A
+daemon starts without its fixture source; the source appears, exits, and
+restarts with a new PID. One SDK connection must observe unavailable →
+available → unavailable → available, with valid frame data after each recovery
+and zero disconnects, resynchronizations or drops. The original VHAL is never
+restarted by these tests. Process-specific checks skip on macOS.
+
+On kernels with Yama ptrace restrictions, each disposable changing fixture
+grants read access specifically to the test daemon with `PR_SET_PTRACER`.
+This permits the sibling processes used by the integration test without
+changing system ptrace settings or permissions on a real VHAL process.
+
+These source tests and the complete recovery integration also passed on the
+IHU629G under Android 9/API 28. A separate temporary real-source run resolved
+111/111 frames at 59.9 Hz, with zero source errors, fallback batches, coalesced
+samples or queue drops. Its SDK session stayed connected without resyncs or
+drops. The production Roadcast and VHAL were preserved, and temporary test
+files/processes were removed. No electrical energy savings are inferred.

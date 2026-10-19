@@ -10,11 +10,35 @@ schema. A release line names all three.
 
 ### Added
 
+- Automatic source rediscovery after VHAL exit or read failure, including
+  startup before the VHAL is ready. Retries back off from 250 ms to 30 s
+  without disconnecting clients or retrying source I/O on every sample tick.
+- Linux/Android tests use disposable source processes to cover source
+  restart, PID identity, fallback/cooldown and uninterrupted client recovery.
+
+- Dense fake-source integration coverage at 1 and 60 Hz, including concurrent
+  CLI/SDK readers, and canonical-state tests without delta subscribers.
+- The ten-second diagnostic counters include `serialized_chunks`, counted
+  once per encoded broadcast chunk rather than once per recipient.
+
 - GitHub Actions now publishes `RELEASE_MANIFEST.json` with Android target,
   protocol/schema compatibility, source commit, and hashes for the daemon,
   CLI, and shared client library.
 
 ### Changed
+
+- Match the source process in `argv[0]`, excluding shells and clients that
+  merely mention its name in arguments. A retained `/proc/PID/stat` descriptor
+  and start time validate each read before it can be published.
+- Cache unavailable vectored-read capability: `ENOSYS` until source reopen,
+  permission errors for 30 s. Successful `/proc/PID/mem` fallback remains
+  connected; source failures close descriptors and discard partial batches.
+
+- Size broadcast scratch buffers and the default bounded client queue from
+  the generated catalog. The current worst-case update needs 19 messages;
+  the queue now holds those messages plus one heartbeat, instead of 16.
+- Skip broadcast serialization when no active delta subscriber can receive
+  it. Canonical values, observation timestamps and sequences keep advancing.
 
 - Eight climate and drivetrain state signals are now calibrated. Their decode
   is the identity, `scale=1` and `offset=0`, because each one is a state or a

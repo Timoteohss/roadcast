@@ -23,6 +23,7 @@
 #include "roadcast_frames.h"
 #include "roadcast_protocol.h"
 #include "roadcast_vhal.h"
+#include "roadcast_source_session.h"
 
 #define DEFAULT_SOCKET "@roadcast"
 #define DEFAULT_PROCESS "vehicle@2.0-service"
@@ -30,7 +31,6 @@
 #define MAX_CLIENTS 16
 #define MAX_CLIENTS_PER_UID 8
 #define CLIENT_INPUT_CAP 4096
-#define CLIENT_QUEUE_SLOTS 16
 #define CLIENT_MESSAGE_CAP 2048
 #define CLIENT_SOCKET_SEND_BUFFER 16384
 #define HEARTBEAT_INTERVAL_MS 1000
@@ -45,6 +45,12 @@
     ((CLIENT_MESSAGE_CAP - ROADCAST_HEADER_SIZE -                              \
       ROADCAST_BATCH_PREFIX_SIZE) /                                            \
      ROADCAST_FRAME_WIRE_SIZE)
+#define FRAME_BATCH_CHUNKS                                                     \
+    ((ROADCAST_FRAME_COUNT + FRAMES_PER_MESSAGE - 1) / FRAMES_PER_MESSAGE)
+#define SIGNAL_BATCH_CHUNKS                                                    \
+    ((ROADCAST_SIGNAL_COUNT + SIGNALS_PER_MESSAGE - 1) / SIGNALS_PER_MESSAGE)
+/* One complete dense update plus one heartbeat, even before write callbacks. */
+#define CLIENT_QUEUE_SLOTS (FRAME_BATCH_CHUNKS + SIGNAL_BATCH_CHUNKS + 1)
 
 typedef struct roadcast_server roadcast_server_t;
 typedef struct roadcast_client roadcast_client_t;
@@ -65,7 +71,7 @@ typedef struct {
     atomic_uint_fast64_t fallback_batches;
     atomic_uchar source_state;
     uv_async_t *notification;
-    roadcast_vhal_source_t vhal;
+    roadcast_source_session_t source;
     roadcast_frame_t working[ROADCAST_FRAME_COUNT];
     roadcast_frame_t published[ROADCAST_FRAME_COUNT];
     uint64_t published_sequence;
@@ -127,6 +133,7 @@ typedef struct {
     uint64_t hello_timeouts;
     uint64_t setup_timeouts;
     uint64_t peer_limit_rejections;
+    uint64_t serialized_chunks;
 } stats_t;
 
 struct roadcast_server {
@@ -275,9 +282,10 @@ initialize_fake_frames(roadcast_frame_t frames[ROADCAST_FRAME_COUNT]) {
 }
 
 static void update_fake_frames(roadcast_frame_t frames[ROADCAST_FRAME_COUNT],
-                               uint64_t sequence) {
+                               uint64_t sequence, int dense) {
     for (size_t i = 0; i < ROADCAST_FRAME_COUNT; i++) {
-        uint64_t value = sequence + i;
+        uint64_t value = dense ? ((sequence & 1) ? UINT64_MAX : 0)
+                               : sequence + i;
         memcpy(frames[i].data, &value, sizeof(value));
     }
 }
@@ -338,12 +346,17 @@ static void *sampler_thread_main(void *argument) {
         sequence++;
         roadcast_frame_t sampled[ROADCAST_FRAME_COUNT] = {0};
         int read_result = 0;
+        int new_source = 0;
         if (sampler->fake) {
             initialize_fake_frames(sampled);
-            update_fake_frames(sampled, sequence);
+            update_fake_frames(sampled, sequence, sampler->fake == 2);
         } else {
-            read_result = roadcast_vhal_read(&sampler->vhal, sampled);
-            if (read_result < 0)
+            uint64_t generation = sampler->source.generation;
+            read_result = roadcast_source_session_read(
+                &sampler->source, sampled, monotonic_ns());
+            new_source = read_result >= 0 &&
+                         generation != sampler->source.generation;
+            if (read_result == -1)
                 atomic_fetch_add_explicit(&sampler->source_errors, 1,
                                           memory_order_relaxed);
             else if (read_result > 0)
@@ -351,7 +364,8 @@ static void *sampler_thread_main(void *argument) {
                                           memory_order_relaxed);
         }
         uint64_t timestamp_ns = monotonic_ns();
-        merge_sampled_frames(sampler->working, sampled, timestamp_ns, 0);
+        merge_sampled_frames(sampler->working, sampled, timestamp_ns,
+                             new_source);
         atomic_store_explicit(
             &sampler->source_state,
             read_result < 0   ? ROADCAST_SOURCE_STATE_UNAVAILABLE
@@ -388,12 +402,13 @@ static int sampler_init(sampler_t *sampler, uv_async_t *notification,
     if (fake) {
         initialize_fake_frames(sampled);
     } else {
-        if (roadcast_vhal_open(&sampler->vhal, process_name) < 0) {
+        if (roadcast_source_session_init(&sampler->source, process_name) < 0) {
             pthread_mutex_destroy(&sampler->published_lock);
             return -1;
         }
-        read_result = roadcast_vhal_read(&sampler->vhal, sampled);
-        if (read_result < 0)
+        read_result = roadcast_source_session_read(&sampler->source, sampled,
+                                                   monotonic_ns());
+        if (read_result == -1)
             atomic_fetch_add_explicit(&sampler->source_errors, 1,
                                       memory_order_relaxed);
         else if (read_result > 0)
@@ -435,7 +450,7 @@ static void sampler_stop(sampler_t *sampler) {
 static void sampler_destroy(sampler_t *sampler) {
     sampler_stop(sampler);
     if (!sampler->fake)
-        roadcast_vhal_close(&sampler->vhal);
+        roadcast_source_session_close(&sampler->source);
     pthread_mutex_destroy(&sampler->published_lock);
 }
 
@@ -1158,15 +1173,26 @@ static void distribute_latest_sample(roadcast_server_t *server) {
 
     server->change_sequence++;
 
+    int has_subscriber = 0;
+    for (size_t i = 0; i < MAX_CLIENTS; i++) {
+        const roadcast_client_t *client = &server->clients[i];
+        if (client->active && client->subscribed && !client->needs_resync) {
+            has_subscriber = 1;
+            break;
+        }
+    }
+    if (!has_subscriber)
+        return;
+
     typedef struct {
         uint8_t payload[CLIENT_MESSAGE_CAP - ROADCAST_HEADER_SIZE];
         size_t length;
     } broadcast_chunk_t;
 
-    broadcast_chunk_t frame_chunks[8];
+    broadcast_chunk_t frame_chunks[FRAME_BATCH_CHUNKS];
     size_t num_frame_chunks = 0;
     size_t frame_offset = 0;
-    while (frame_offset < changed_count && num_frame_chunks < 8) {
+    while (frame_offset < changed_count) {
         size_t chunk_count = changed_count - frame_offset;
         if (chunk_count > FRAMES_PER_MESSAGE)
             chunk_count = FRAMES_PER_MESSAGE;
@@ -1176,13 +1202,14 @@ static void distribute_latest_sample(roadcast_server_t *server) {
             ROADCAST_FRAME_COUNT, UINT32_MAX, server->frames,
             changed + frame_offset, chunk_count);
         num_frame_chunks++;
+        server->stats.serialized_chunks++;
         frame_offset += chunk_count;
     }
 
-    broadcast_chunk_t signal_chunks[20];
+    broadcast_chunk_t signal_chunks[SIGNAL_BATCH_CHUNKS];
     size_t num_signal_chunks = 0;
     size_t signal_offset = 0;
-    while (signal_offset < changed_signal_count && num_signal_chunks < 20) {
+    while (signal_offset < changed_signal_count) {
         size_t chunk_count = changed_signal_count - signal_offset;
         if (chunk_count > SIGNALS_PER_MESSAGE)
             chunk_count = SIGNALS_PER_MESSAGE;
@@ -1192,6 +1219,7 @@ static void distribute_latest_sample(roadcast_server_t *server) {
             ROADCAST_SIGNAL_COUNT, UINT32_MAX, server->signals,
             changed_signals + signal_offset, chunk_count);
         num_signal_chunks++;
+        server->stats.serialized_chunks++;
         signal_offset += chunk_count;
     }
 
@@ -1289,7 +1317,8 @@ static void on_stats(uv_timer_t *timer) {
             "roadcastd: %.2f Hz, clients=%zu, changes/tick=%.2f, "
             "source_errors=%llu, fallback_batches=%llu, coalesced=%llu, "
             "queue_drops=%llu, hello_timeouts=%llu, "
-            "setup_timeouts=%llu, peer_rejections=%llu\n",
+            "setup_timeouts=%llu, peer_rejections=%llu, "
+            "serialized_chunks=%llu\n",
             server->stats.ticks / (STATS_INTERVAL_MS / 1000.0),
             active_client_count(server),
             server->stats.ticks
@@ -1303,7 +1332,8 @@ static void on_stats(uv_timer_t *timer) {
             (unsigned long long)server->stats.queue_drops,
             (unsigned long long)server->stats.hello_timeouts,
             (unsigned long long)server->stats.setup_timeouts,
-            (unsigned long long)server->stats.peer_limit_rejections);
+            (unsigned long long)server->stats.peer_limit_rejections,
+            (unsigned long long)server->stats.serialized_chunks);
     memset(&server->stats, 0, sizeof(server->stats));
     server->stats.source_errors_at_start = source_errors;
     server->stats.fallback_batches_at_start = fallback_batches;
@@ -1433,9 +1463,10 @@ static int parse_positive_int(const char *value, int min, int max,
 
 static void usage(const char *program) {
     fprintf(stderr,
-            "Usage: %s [--fake] [--hz 1..240] [--socket @name|path] "
-            "[--proc substring] [--client-queue-slots 1..16]\n",
-            program);
+            "Usage: %s [--fake|--fake-dense] [--hz 1..240] "
+            "[--socket @name|path] [--proc substring] "
+            "[--client-queue-slots 1..%zu]\n",
+            program, (size_t)CLIENT_QUEUE_SLOTS);
 }
 
 int main(int argc, char **argv) {
@@ -1447,6 +1478,8 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--fake")) {
             fake = 1;
+        } else if (!strcmp(argv[i], "--fake-dense")) {
+            fake = 2;
         } else if (!strcmp(argv[i], "--hz") && i + 1 < argc) {
             if (parse_positive_int(argv[++i], 1, 240, &hz) < 0) {
                 usage(argv[0]);
@@ -1515,6 +1548,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    pid_t initial_pid = fake ? 0 : server.sampler.source.vhal.pid;
+    size_t initial_frames = fake ? ROADCAST_FRAME_COUNT
+                                : server.sampler.source.vhal.resolved_count;
     if (sampler_start(&server.sampler) < 0) {
         fprintf(stderr, "Failed to start sampler: %s\n", strerror(errno));
         server_shutdown(&server);
@@ -1532,8 +1568,7 @@ int main(int argc, char **argv) {
     }
     fprintf(stderr,
             "roadcastd: source=%s pid=%d frames=%zu/%zu hz=%u socket=%s\n",
-            fake ? "fake" : "vhal", fake ? 0 : server.sampler.vhal.pid,
-            fake ? ROADCAST_FRAME_COUNT : server.sampler.vhal.resolved_count,
+            fake ? "fake" : "vhal", initial_pid, initial_frames,
             ROADCAST_FRAME_COUNT, server.hz, socket_name);
 
     uv_run(&server.loop, UV_RUN_DEFAULT);
