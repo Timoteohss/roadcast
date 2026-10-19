@@ -23,6 +23,7 @@
 #include "roadcast_frames.h"
 #include "roadcast_protocol.h"
 #include "roadcast_vhal.h"
+#include "roadcast_source_session.h"
 
 #define DEFAULT_SOCKET "@roadcast"
 #define DEFAULT_PROCESS "vehicle@2.0-service"
@@ -70,7 +71,7 @@ typedef struct {
     atomic_uint_fast64_t fallback_batches;
     atomic_uchar source_state;
     uv_async_t *notification;
-    roadcast_vhal_source_t vhal;
+    roadcast_source_session_t source;
     roadcast_frame_t working[ROADCAST_FRAME_COUNT];
     roadcast_frame_t published[ROADCAST_FRAME_COUNT];
     uint64_t published_sequence;
@@ -345,12 +346,17 @@ static void *sampler_thread_main(void *argument) {
         sequence++;
         roadcast_frame_t sampled[ROADCAST_FRAME_COUNT] = {0};
         int read_result = 0;
+        int new_source = 0;
         if (sampler->fake) {
             initialize_fake_frames(sampled);
             update_fake_frames(sampled, sequence, sampler->fake == 2);
         } else {
-            read_result = roadcast_vhal_read(&sampler->vhal, sampled);
-            if (read_result < 0)
+            uint64_t generation = sampler->source.generation;
+            read_result = roadcast_source_session_read(
+                &sampler->source, sampled, monotonic_ns());
+            new_source = read_result >= 0 &&
+                         generation != sampler->source.generation;
+            if (read_result == -1)
                 atomic_fetch_add_explicit(&sampler->source_errors, 1,
                                           memory_order_relaxed);
             else if (read_result > 0)
@@ -358,7 +364,8 @@ static void *sampler_thread_main(void *argument) {
                                           memory_order_relaxed);
         }
         uint64_t timestamp_ns = monotonic_ns();
-        merge_sampled_frames(sampler->working, sampled, timestamp_ns, 0);
+        merge_sampled_frames(sampler->working, sampled, timestamp_ns,
+                             new_source);
         atomic_store_explicit(
             &sampler->source_state,
             read_result < 0   ? ROADCAST_SOURCE_STATE_UNAVAILABLE
@@ -395,12 +402,13 @@ static int sampler_init(sampler_t *sampler, uv_async_t *notification,
     if (fake) {
         initialize_fake_frames(sampled);
     } else {
-        if (roadcast_vhal_open(&sampler->vhal, process_name) < 0) {
+        if (roadcast_source_session_init(&sampler->source, process_name) < 0) {
             pthread_mutex_destroy(&sampler->published_lock);
             return -1;
         }
-        read_result = roadcast_vhal_read(&sampler->vhal, sampled);
-        if (read_result < 0)
+        read_result = roadcast_source_session_read(&sampler->source, sampled,
+                                                   monotonic_ns());
+        if (read_result == -1)
             atomic_fetch_add_explicit(&sampler->source_errors, 1,
                                       memory_order_relaxed);
         else if (read_result > 0)
@@ -442,7 +450,7 @@ static void sampler_stop(sampler_t *sampler) {
 static void sampler_destroy(sampler_t *sampler) {
     sampler_stop(sampler);
     if (!sampler->fake)
-        roadcast_vhal_close(&sampler->vhal);
+        roadcast_source_session_close(&sampler->source);
     pthread_mutex_destroy(&sampler->published_lock);
 }
 
@@ -1540,6 +1548,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    pid_t initial_pid = fake ? 0 : server.sampler.source.vhal.pid;
+    size_t initial_frames = fake ? ROADCAST_FRAME_COUNT
+                                : server.sampler.source.vhal.resolved_count;
     if (sampler_start(&server.sampler) < 0) {
         fprintf(stderr, "Failed to start sampler: %s\n", strerror(errno));
         server_shutdown(&server);
@@ -1557,8 +1568,7 @@ int main(int argc, char **argv) {
     }
     fprintf(stderr,
             "roadcastd: source=%s pid=%d frames=%zu/%zu hz=%u socket=%s\n",
-            fake ? "fake" : "vhal", fake ? 0 : server.sampler.vhal.pid,
-            fake ? ROADCAST_FRAME_COUNT : server.sampler.vhal.resolved_count,
+            fake ? "fake" : "vhal", initial_pid, initial_frames,
             ROADCAST_FRAME_COUNT, server.hz, socket_name);
 
     uv_run(&server.loop, UV_RUN_DEFAULT);

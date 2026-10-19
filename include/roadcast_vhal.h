@@ -12,6 +12,9 @@
 typedef struct {
     pid_t pid;
     int mem_fd;
+    int identity_fd;
+    uint64_t start_time_ticks;
+    uint64_t vm_readv_retry_ns;
     uint64_t addresses[ROADCAST_FRAME_COUNT];
     struct iovec *local_iov;
     struct iovec *remote_iov;

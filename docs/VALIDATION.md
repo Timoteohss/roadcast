@@ -309,3 +309,31 @@ All temporary processes exited and the test directory/binaries were removed.
 The original daemon retained PID 4861. No experimental suspension blocker
 remained active. This short functional run does not establish electrical
 power savings or long-term reliability.
+
+## Source Recovery
+
+`make test` covers exponential source retry deadlines using an injected backend
+and clock. Waiting ticks perform no source I/O, delay is capped at 30 s, only
+a successful read resets it, generation changes on reopen, and failed partial
+reads are discarded. Successful degraded reads do not trigger reconnection.
+
+On Linux/Android, `test_vhal_source` spawns disposable executable fixtures
+exporting one known CAN-buffer symbol. It checks real symbol/address discovery,
+vectored and fallback reads, permission cooldown, unsupported-syscall caching,
+interruption retry, retained error codes, start-time mismatch, and rejection of
+a readable replacement PID with the old process's identity descriptor. A
+decoy mentioning the target only in its arguments must not match discovery.
+
+`make integration` additionally runs `recovery_integration.sh` on Linux. A
+daemon starts without its fixture source; the source appears, exits, and
+restarts with a new PID. One SDK connection must observe unavailable →
+available → unavailable → available, with valid frame data after each recovery
+and zero disconnects, resynchronizations or drops. The original VHAL is never
+restarted by these tests. Process-specific checks skip on macOS.
+
+These source tests and the complete recovery integration also passed on the
+IHU629G under Android 9/API 28. A separate temporary real-source run resolved
+111/111 frames at 59.9 Hz, with zero source errors, fallback batches, coalesced
+samples or queue drops. Its SDK session stayed connected without resyncs or
+drops. The production Roadcast and VHAL were preserved, and temporary test
+files/processes were removed. No electrical energy savings are inferred.

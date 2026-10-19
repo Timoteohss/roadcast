@@ -10,6 +10,12 @@ schema. A release line names all three.
 
 ### Added
 
+- Automatic source rediscovery after VHAL exit or read failure, including
+  startup before the VHAL is ready. Retries back off from 250 ms to 30 s
+  without disconnecting clients or retrying source I/O on every sample tick.
+- Linux/Android tests use disposable source processes to cover source
+  restart, PID identity, fallback/cooldown and uninterrupted client recovery.
+
 - Dense fake-source integration coverage at 1 and 60 Hz, including concurrent
   CLI/SDK readers, and canonical-state tests without delta subscribers.
 - The ten-second diagnostic counters include `serialized_chunks`, counted
@@ -20,6 +26,13 @@ schema. A release line names all three.
   CLI, and shared client library.
 
 ### Changed
+
+- Match the source process in `argv[0]`, excluding shells and clients that
+  merely mention its name in arguments. A retained `/proc/PID/stat` descriptor
+  and start time validate each read before it can be published.
+- Cache unavailable vectored-read capability: `ENOSYS` until source reopen,
+  permission errors for 30 s. Successful `/proc/PID/mem` fallback remains
+  connected; source failures close descriptors and discard partial batches.
 
 - Size broadcast scratch buffers and the default bounded client queue from
   the generated catalog. The current worst-case update needs 19 messages;
