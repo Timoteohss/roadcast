@@ -15,8 +15,12 @@ static ssize_t tracked_vm_readv(pid_t pid, const struct iovec *local,
 #undef process_vm_readv
 
 #include <assert.h>
+#include <limits.h>
 #include <signal.h>
 #include <sys/wait.h>
+#if defined(__linux__) || defined(__ANDROID__)
+#include <sys/prctl.h>
+#endif
 
 /* The resolver uses this fixture symbol exactly as it uses an OEM CAN buffer. */
 volatile uint64_t MMI_Rx_085 = UINT64_C(0x123456789abcdef0);
@@ -71,6 +75,17 @@ int main(int argc, char **argv) {
     if (argc >= 3 && (strcmp(argv[1], "--fixture") == 0 ||
                       strcmp(argv[1], "--fixture-changing") == 0)) {
         alarm(30); /* A failed assertion in the parent cannot leave a fixture. */
+        if (strcmp(argv[1], "--fixture-changing") == 0) {
+            /* Under Yama the daemon is a sibling, not this fixture's parent.
+             * Grant only that daemon access to this disposable test process. */
+            assert(argc >= 4);
+            char *end;
+            long reader = strtol(argv[3], &end, 10);
+            assert(reader > 0 && reader <= INT_MAX && *end == '\0');
+            int permitted = prctl(PR_SET_PTRACER, (unsigned long)reader,
+                                   0UL, 0UL, 0UL);
+            assert(permitted == 0 || errno == EINVAL); /* No Yama on some kernels. */
+        }
         int ready = atoi(argv[2]);
         assert(write(ready, "R", 1) == 1);
         close(ready);

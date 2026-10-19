@@ -331,6 +331,11 @@ available → unavailable → available, with valid frame data after each recove
 and zero disconnects, resynchronizations or drops. The original VHAL is never
 restarted by these tests. Process-specific checks skip on macOS.
 
+On kernels with Yama ptrace restrictions, each disposable changing fixture
+grants read access specifically to the test daemon with `PR_SET_PTRACER`.
+This permits the sibling processes used by the integration test without
+changing system ptrace settings or permissions on a real VHAL process.
+
 These source tests and the complete recovery integration also passed on the
 IHU629G under Android 9/API 28. A separate temporary real-source run resolved
 111/111 frames at 59.9 Hz, with zero source errors, fallback batches, coalesced

@@ -57,7 +57,7 @@ done
 WATCH_PID=$!
 wait_phase 0
 
-"$ROOT/build/test_vhal_source" --fixture-changing 1 >"$TEMP_DIR/fixture.stdout" &
+"$ROOT/build/test_vhal_source" --fixture-changing 1 "$DAEMON_PID" >"$TEMP_DIR/fixture.stdout" &
 FIXTURE_PID=$!
 wait_phase 1
 kill -TERM "$FIXTURE_PID"
@@ -65,7 +65,7 @@ wait "$FIXTURE_PID" || true
 FIXTURE_PID=""
 wait_phase 2
 sleep 1
-"$ROOT/build/test_vhal_source" --fixture-changing 1 >"$TEMP_DIR/fixture.stdout" &
+"$ROOT/build/test_vhal_source" --fixture-changing 1 "$DAEMON_PID" >"$TEMP_DIR/fixture.stdout" &
 FIXTURE_PID=$!
 wait_phase 3
 wait "$WATCH_PID"
