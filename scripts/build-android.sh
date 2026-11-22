@@ -52,11 +52,12 @@ COMMON_FLAGS=(
   "$ROOT/src/roadcastd.c" \
   "$ROOT/src/vhal_source.c" \
   "$ROOT/src/source_session.c" \
+  "$ROOT/src/buckets.c" \
   "$ROOT/src/protocol.c" \
   "$ROOT/src/catalog.c" \
   "$ROOT/src/catalog_generated.c" \
   "$LIBUV_PREFIX/lib/libuv.a" \
-  -pie -pthread -ldl
+  -pie -pthread -ldl -lm
 
 "$CC" "${COMMON_FLAGS[@]}" -fPIE \
   -o "$OUT_DIR/roadcastctl" \

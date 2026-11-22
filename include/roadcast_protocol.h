@@ -17,6 +17,9 @@
 #define ROADCAST_SCHEMA_ENTRY_FIXED_SIZE 44u
 #define ROADCAST_SCHEMA_NAME_MAX 63u
 #define ROADCAST_SCHEMA_UNIT_MAX 15u
+#define ROADCAST_BUCKETS_REQUEST_SIZE 16u
+#define ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE 20u
+#define ROADCAST_BUCKET_WIRE_SIZE 72u
 #define ROADCAST_MAX_PAYLOAD 65536u
 #define ROADCAST_MAX_MESSAGE (ROADCAST_HEADER_SIZE + ROADCAST_MAX_PAYLOAD)
 
@@ -37,11 +40,14 @@ enum roadcast_message_type {
     ROADCAST_MSG_GET_SIGNAL_SNAPSHOT = 14,
     ROADCAST_MSG_SIGNAL_SNAPSHOT_CHUNK = 15,
     ROADCAST_MSG_SIGNAL_UPDATE_BATCH = 16,
+    ROADCAST_MSG_GET_BUCKETS = 17,
+    ROADCAST_MSG_BUCKETS_CHUNK = 18,
 };
 
 enum roadcast_capability {
     ROADCAST_CAP_RAW_CAN = 1u << 0,
     ROADCAST_CAP_DECODED_CAN = 1u << 1,
+    ROADCAST_CAP_SIGNAL_BUCKETS = 1u << 2,
 };
 
 enum roadcast_item_kind {
@@ -103,6 +109,19 @@ typedef struct {
     uint32_t index;
     roadcast_signal_value_t value;
 } roadcast_signal_update_t;
+
+typedef struct {
+    uint64_t bucket_id;
+    uint64_t start_monotonic_ns;
+    uint32_t signal_index;
+    uint32_t covered_ms;
+    double pos_integral;
+    double neg_integral;
+    double min_val;
+    double max_val;
+    double first_val;
+    double last_val;
+} roadcast_signal_bucket_t;
 
 typedef struct {
     uint64_t stable_id;
@@ -188,5 +207,25 @@ int roadcast_decode_heartbeat(const uint8_t *payload, size_t len,
                               uint64_t *coalesced_samples,
                               uint32_t *effective_hz_millihz,
                               uint8_t *source_state);
+
+size_t roadcast_encode_buckets_request(
+    uint8_t out[ROADCAST_BUCKETS_REQUEST_SIZE], uint64_t after_bucket_id,
+    uint32_t signal_index, uint32_t start_offset);
+int roadcast_decode_buckets_request(const uint8_t *payload, size_t len,
+                                    uint64_t *after_bucket_id,
+                                    uint32_t *signal_index,
+                                    uint32_t *start_offset);
+
+size_t roadcast_encode_buckets_chunk(uint8_t *out, size_t capacity,
+                                     uint64_t latest_bucket_id,
+                                     uint32_t total_count,
+                                     uint32_t start_offset,
+                                     const roadcast_signal_bucket_t *buckets,
+                                     size_t count);
+int roadcast_decode_buckets_chunk(const uint8_t *payload, size_t len,
+                                  uint64_t *latest_bucket_id,
+                                  uint32_t *total_count, uint32_t *start_offset,
+                                  roadcast_signal_bucket_t *buckets,
+                                  size_t bucket_capacity, size_t *bucket_count);
 
 #endif

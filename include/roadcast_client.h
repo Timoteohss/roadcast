@@ -18,6 +18,8 @@ enum roadcast_client_error {
     ROADCAST_CLIENT_ERR_SNAPSHOT = -6,
     ROADCAST_CLIENT_ERR_MEMORY = -7,
     ROADCAST_CLIENT_ERR_THREAD = -8,
+    ROADCAST_CLIENT_ERR_UNSUPPORTED = -9,
+    ROADCAST_CLIENT_ERR_TIMEOUT = -10,
 };
 
 typedef struct {
@@ -51,6 +53,9 @@ void roadcast_client_close(roadcast_client_t *client);
 
 int roadcast_client_status(roadcast_client_t *client,
                            roadcast_client_status_t *status);
+
+/* Negotiated capability bitmask advertised by roadcastd in WELCOME. */
+uint32_t roadcast_client_capabilities(const roadcast_client_t *client);
 
 /*
  * Schema storage is immutable and owned by the client. The pointer remains
@@ -92,6 +97,20 @@ int roadcast_client_read_frame(roadcast_client_t *client, uint16_t can_id,
 int32_t roadcast_client_read_all(roadcast_client_t *client,
                                  roadcast_signal_value_t *values,
                                  size_t capacity);
+
+/*
+ * Queries 60-second monotonic bipolar signal buckets from roadcastd.
+ * Pass signal_index == UINT32_MAX for all bucketed signals, or a specific
+ * schema index. Returns ROADCAST_CLIENT_OK on success, or
+ * ROADCAST_CLIENT_ERR_UNSUPPORTED if the daemon does not advertise
+ * ROADCAST_CAP_SIGNAL_BUCKETS.
+ */
+int roadcast_client_read_buckets(roadcast_client_t *client,
+                                 uint64_t after_bucket_id,
+                                 uint32_t signal_index,
+                                 roadcast_signal_bucket_t *buckets,
+                                 size_t capacity, size_t *out_count,
+                                 uint64_t *latest_bucket_id);
 
 /*
  * Returns CLOCK_MONOTONIC age of the latest source sample, or -1 when no

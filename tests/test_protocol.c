@@ -46,15 +46,17 @@ static void test_handshake_round_trip(void) {
                                  &max_version, &capabilities) == 0);
     assert(min_version == ROADCAST_PROTOCOL_VERSION);
     assert(max_version == ROADCAST_PROTOCOL_VERSION);
-    assert(capabilities == (ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN));
+    assert(capabilities == (ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN |
+                            ROADCAST_CAP_SIGNAL_BUCKETS));
     assert(roadcast_decode_hello(hello, sizeof(hello) - 1, &min_version,
                                  &max_version, &capabilities) < 0);
 
     uint8_t welcome[ROADCAST_WELCOME_SIZE];
     assert(roadcast_encode_welcome(
                welcome, 60, 111, 815, 4064, 2016,
-               ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN, 1,
-               UINT64_C(0x123456789abcdef0)) == sizeof(welcome));
+               ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN |
+                   ROADCAST_CAP_SIGNAL_BUCKETS,
+               1, UINT64_C(0x123456789abcdef0)) == sizeof(welcome));
     uint32_t hz;
     uint32_t frame_count;
     uint32_t signal_count;
@@ -71,7 +73,8 @@ static void test_handshake_round_trip(void) {
     assert(signal_count == 815);
     assert(max_request_payload == 4064);
     assert(max_response_payload == 2016);
-    assert(capabilities == (ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN));
+    assert(capabilities == (ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN |
+                            ROADCAST_CAP_SIGNAL_BUCKETS));
     assert(schema_version == 1);
     assert(schema_hash == UINT64_C(0x123456789abcdef0));
 
@@ -228,12 +231,75 @@ static void test_heartbeat_round_trip(void) {
                                      &effective_hz_millihz, &source_state) < 0);
 }
 
+static void test_buckets_round_trip(void) {
+    uint8_t req[ROADCAST_BUCKETS_REQUEST_SIZE];
+    assert(roadcast_encode_buckets_request(req, 42, UINT32_MAX, 5) ==
+           sizeof(req));
+    uint64_t after_id;
+    uint32_t sig_idx;
+    uint32_t start_off;
+    assert(roadcast_decode_buckets_request(req, sizeof(req), &after_id,
+                                           &sig_idx, &start_off) == 0);
+    assert(after_id == 42);
+    assert(sig_idx == UINT32_MAX);
+    assert(start_off == 5);
+    assert(roadcast_decode_buckets_request(req, sizeof(req) - 1, &after_id,
+                                           &sig_idx, &start_off) < 0);
+
+    roadcast_signal_bucket_t in[2] = {
+        {.bucket_id = 10,
+         .start_monotonic_ns = UINT64_C(600000000000),
+         .signal_index = 7,
+         .covered_ms = 60000u,
+         .pos_integral = 123.5,
+         .neg_integral = 12.25,
+         .min_val = -5.5,
+         .max_val = 42.0,
+         .first_val = 1.0,
+         .last_val = 2.0},
+        {.bucket_id = 11,
+         .start_monotonic_ns = UINT64_C(660000000000),
+         .signal_index = 7,
+         .covered_ms = 15000u,
+         .pos_integral = 0.0,
+         .neg_integral = 80.0,
+         .min_val = -7.2,
+         .max_val = -7.0,
+         .first_val = -7.1,
+         .last_val = -7.2},
+    };
+    uint8_t chunk[ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE +
+                  2 * ROADCAST_BUCKET_WIRE_SIZE];
+    size_t len = roadcast_encode_buckets_chunk(chunk, sizeof(chunk), 11, 2, 0,
+                                               in, 2);
+    assert(len == sizeof(chunk));
+
+    roadcast_signal_bucket_t out[2];
+    uint64_t latest;
+    uint32_t total;
+    uint32_t offset;
+    size_t count;
+    assert(roadcast_decode_buckets_chunk(chunk, len, &latest, &total, &offset,
+                                         out, 2, &count) == 0);
+    assert(latest == 11);
+    assert(total == 2);
+    assert(offset == 0);
+    assert(count == 2);
+    assert(out[0].bucket_id == 10);
+    assert(out[0].pos_integral == 123.5);
+    assert(out[0].neg_integral == 12.25);
+    assert(out[1].bucket_id == 11);
+    assert(out[1].covered_ms == 15000u);
+    assert(out[1].last_val == -7.2);
+}
+
 int main(void) {
     test_header_round_trip();
     test_handshake_round_trip();
     test_frame_batch_round_trip();
     test_signal_batch_round_trip();
     test_heartbeat_round_trip();
+    test_buckets_round_trip();
     puts("protocol tests passed");
     return 0;
 }

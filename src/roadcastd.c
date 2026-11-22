@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <uv.h>
 
+#include "roadcast_buckets.h"
 #include "roadcast_catalog.h"
 #include "roadcast_frames.h"
 #include "roadcast_protocol.h"
@@ -51,6 +52,10 @@
     ((ROADCAST_SIGNAL_COUNT + SIGNALS_PER_MESSAGE - 1) / SIGNALS_PER_MESSAGE)
 /* One complete dense update plus one heartbeat, even before write callbacks. */
 #define CLIENT_QUEUE_SLOTS (FRAME_BATCH_CHUNKS + SIGNAL_BATCH_CHUNKS + 1)
+#define BUCKETS_PER_MESSAGE                                                    \
+    ((CLIENT_MESSAGE_CAP - ROADCAST_HEADER_SIZE -                              \
+      ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE) /                                    \
+     ROADCAST_BUCKET_WIRE_SIZE)
 
 typedef struct roadcast_server roadcast_server_t;
 typedef struct roadcast_client roadcast_client_t;
@@ -148,6 +153,7 @@ struct roadcast_server {
     sampler_t sampler;
     roadcast_frame_t frames[ROADCAST_FRAME_COUNT];
     roadcast_signal_value_t signals[ROADCAST_SIGNAL_COUNT];
+    roadcast_bucket_store_t buckets;
     uint64_t sample_sequence;
     uint64_t change_sequence;
     uint64_t sample_timestamp_ns;
@@ -791,6 +797,32 @@ static int queue_signal_snapshot_chunk(roadcast_client_t *client,
     return 0;
 }
 
+static int queue_buckets_chunk(roadcast_client_t *client,
+                               uint64_t after_bucket_id, uint32_t signal_index,
+                               uint32_t start_offset) {
+    roadcast_server_t *server = client->server;
+    size_t total = roadcast_bucket_store_count(&server->buckets,
+                                               after_bucket_id, signal_index);
+    if (start_offset > total)
+        return -1;
+    roadcast_signal_bucket_t chunk[BUCKETS_PER_MESSAGE];
+    size_t count = roadcast_bucket_store_query(
+        &server->buckets, after_bucket_id, signal_index, start_offset, chunk,
+        BUCKETS_PER_MESSAGE);
+    uint8_t payload[CLIENT_MESSAGE_CAP - ROADCAST_HEADER_SIZE];
+    uint64_t latest_id = server->buckets.has_latest_bucket
+                             ? server->buckets.latest_bucket_id
+                             : 0u;
+    size_t length = roadcast_encode_buckets_chunk(
+        payload, sizeof(payload), latest_id, (uint32_t)total, start_offset,
+        chunk, count);
+    if (!length)
+        return -1;
+    return client_queue_message(
+        client, ROADCAST_MSG_BUCKETS_CHUNK, server->change_sequence,
+        server->sample_timestamp_ns, payload, length, 0);
+}
+
 static int process_command(roadcast_client_t *client,
                            const roadcast_header_t *header,
                            const uint8_t *payload) {
@@ -816,7 +848,8 @@ static int process_command(roadcast_client_t *client,
             welcome, server->hz, ROADCAST_FRAME_COUNT, ROADCAST_SIGNAL_COUNT,
             CLIENT_INPUT_CAP - ROADCAST_HEADER_SIZE,
             CLIENT_MESSAGE_CAP - ROADCAST_HEADER_SIZE,
-            ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN,
+            ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN |
+                ROADCAST_CAP_SIGNAL_BUCKETS,
             ROADCAST_SCHEMA_VERSION, ROADCAST_CAN_SCHEMA_HASH);
         if (client_queue_message(
                 client, ROADCAST_MSG_WELCOME, server->change_sequence,
@@ -861,6 +894,18 @@ static int process_command(roadcast_client_t *client,
                                           &start_index) < 0)
             return -1;
         return queue_signal_snapshot_chunk(client, start_index);
+    }
+    case ROADCAST_MSG_GET_BUCKETS: {
+        uint64_t after_bucket_id;
+        uint32_t signal_index;
+        uint32_t start_offset;
+        if (!client->greeted ||
+            roadcast_decode_buckets_request(payload, header->payload_bytes,
+                                            &after_bucket_id, &signal_index,
+                                            &start_offset) < 0)
+            return -1;
+        return queue_buckets_chunk(client, after_bucket_id, signal_index,
+                                   start_offset);
     }
     default:
         return -1;
@@ -1114,6 +1159,8 @@ static void distribute_latest_sample(roadcast_server_t *server) {
         memcpy(server->frames, latest, sizeof(server->frames));
         server->sample_sequence = sequence;
         server->sample_timestamp_ns = timestamp_ns;
+        roadcast_bucket_store_ingest(&server->buckets, server->signals,
+                                     ROADCAST_SIGNAL_COUNT, timestamp_ns);
         server->stats.ticks += elapsed_ticks;
         server->stats.coalesced_samples += elapsed_ticks - 1;
         server->coalesced_samples += elapsed_ticks - 1;
@@ -1164,6 +1211,8 @@ static void distribute_latest_sample(roadcast_server_t *server) {
     memcpy(server->signals, latest_signals, sizeof(server->signals));
     server->sample_sequence = sequence;
     server->sample_timestamp_ns = timestamp_ns;
+    roadcast_bucket_store_ingest(&server->buckets, server->signals,
+                                 ROADCAST_SIGNAL_COUNT, timestamp_ns);
     server->stats.ticks += elapsed_ticks;
     server->stats.coalesced_samples += elapsed_ticks - 1;
     server->coalesced_samples += elapsed_ticks - 1;
@@ -1469,6 +1518,30 @@ static void usage(const char *program) {
             program, (size_t)CLIENT_QUEUE_SLOTS);
 }
 
+static void initialize_default_buckets(roadcast_bucket_store_t *store) {
+    static const char *const k_default_bucket_signals[] = {
+        "VCU_DrvPwrAct",       "VCU_ThermalPwrAct", "VCU_ChrgDischrgPwrAct",
+        "BMSH_BattCurr",       "BMSH_BattVolt",     "BMSH_BattSOC",
+        "ESC_VehicleSpeed",    "OBC_uInAct",        "OBC_iInAct",
+    };
+    uint32_t indices[ROADCAST_BUCKET_MAX_SIGNALS];
+    size_t count = 0;
+    for (size_t k = 0;
+         k < sizeof(k_default_bucket_signals) /
+                 sizeof(k_default_bucket_signals[0]) &&
+         count < ROADCAST_BUCKET_MAX_SIGNALS;
+         k++) {
+        for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
+            if (strcmp(ROADCAST_SIGNALS[i].name, k_default_bucket_signals[k]) ==
+                0) {
+                indices[count++] = i;
+                break;
+            }
+        }
+    }
+    roadcast_bucket_store_init(store, indices, count);
+}
+
 int main(int argc, char **argv) {
     const char *socket_name = DEFAULT_SOCKET;
     const char *process_name = DEFAULT_PROCESS;
@@ -1506,59 +1579,69 @@ int main(int argc, char **argv) {
 
     signal(SIGPIPE, SIG_IGN);
 
-    roadcast_server_t server;
-    memset(&server, 0, sizeof(server));
-    server.hz = (uint32_t)hz;
-    server.client_queue_slots = (uint32_t)client_queue_slots;
-    server.effective_hz_millihz = server.hz * 1000;
+    roadcast_server_t *server = calloc(1, sizeof(*server));
+    if (!server) {
+        fprintf(stderr, "Failed to allocate server state\n");
+        return 1;
+    }
+    server->hz = (uint32_t)hz;
+    server->client_queue_slots = (uint32_t)client_queue_slots;
+    server->effective_hz_millihz = server->hz * 1000;
+    initialize_default_buckets(&server->buckets);
 
-    if (sampler_init(&server.sampler, &server.sample_notification, server.hz,
+    if (sampler_init(&server->sampler, &server->sample_notification, server->hz,
                      fake, process_name) < 0) {
         fprintf(stderr, "Failed to initialize %s source: %s\n",
                 fake ? "fake" : "VHAL", strerror(errno));
+        free(server);
         return 1;
     }
-    sampler_read_latest(&server.sampler, server.frames, &server.sample_sequence,
-                        &server.sample_timestamp_ns);
-    roadcast_decode_signals(server.frames, server.signals);
+    sampler_read_latest(&server->sampler, server->frames,
+                        &server->sample_sequence, &server->sample_timestamp_ns);
+    roadcast_decode_signals(server->frames, server->signals);
     for (uint32_t i = 0; i < ROADCAST_SIGNAL_COUNT; i++) {
-        if (server.signals[i].state == ROADCAST_OBSERVATION_VALID) {
-            server.signals[i].first_observed_ns = server.sample_timestamp_ns;
-            server.signals[i].last_change_ns = server.sample_timestamp_ns;
+        if (server->signals[i].state == ROADCAST_OBSERVATION_VALID) {
+            server->signals[i].first_observed_ns = server->sample_timestamp_ns;
+            server->signals[i].last_change_ns = server->sample_timestamp_ns;
         } else {
-            server.signals[i].first_observed_ns = 0;
-            server.signals[i].last_change_ns = 0;
+            server->signals[i].first_observed_ns = 0;
+            server->signals[i].last_change_ns = 0;
         }
     }
-    server.stats.source_errors_at_start = atomic_load_explicit(
-        &server.sampler.source_errors, memory_order_relaxed);
-    server.stats.fallback_batches_at_start = atomic_load_explicit(
-        &server.sampler.fallback_batches, memory_order_relaxed);
+    roadcast_bucket_store_ingest(&server->buckets, server->signals,
+                                 ROADCAST_SIGNAL_COUNT,
+                                 server->sample_timestamp_ns);
+    server->stats.source_errors_at_start = atomic_load_explicit(
+        &server->sampler.source_errors, memory_order_relaxed);
+    server->stats.fallback_batches_at_start = atomic_load_explicit(
+        &server->sampler.fallback_batches, memory_order_relaxed);
 
-    int uv_result = initialize_libuv(&server, socket_name);
+    int uv_result = initialize_libuv(server, socket_name);
     if (uv_result < 0) {
         fprintf(stderr, "Failed to initialize transport %s: %s\n", socket_name,
                 uv_strerror(uv_result));
-        server_shutdown(&server);
-        uv_run(&server.loop, UV_RUN_DEFAULT);
-        uv_loop_close(&server.loop);
-        if (server.socket_path[0])
-            unlink(server.socket_path);
-        sampler_destroy(&server.sampler);
+        server_shutdown(server);
+        uv_run(&server->loop, UV_RUN_DEFAULT);
+        uv_loop_close(&server->loop);
+        if (server->socket_path[0])
+            unlink(server->socket_path);
+        sampler_destroy(&server->sampler);
+        free(server);
         return 1;
     }
 
-    pid_t initial_pid = fake ? 0 : server.sampler.source.vhal.pid;
+    pid_t initial_pid = fake ? 0 : server->sampler.source.vhal.pid;
     size_t initial_frames = fake ? ROADCAST_FRAME_COUNT
-                                : server.sampler.source.vhal.resolved_count;
-    if (sampler_start(&server.sampler) < 0) {
+                                 : server->sampler.source.vhal.resolved_count;
+    if (sampler_start(&server->sampler) < 0) {
         fprintf(stderr, "Failed to start sampler: %s\n", strerror(errno));
-        server_shutdown(&server);
-        uv_run(&server.loop, UV_RUN_DEFAULT);
-        uv_loop_close(&server.loop);
-        if (server.socket_path[0])
-            unlink(server.socket_path);
-        sampler_destroy(&server.sampler);
+        server_shutdown(server);
+        uv_run(&server->loop, UV_RUN_DEFAULT);
+        uv_loop_close(&server->loop);
+        if (server->socket_path[0])
+            unlink(server->socket_path);
+        sampler_destroy(&server->sampler);
+        free(server);
         return 1;
     }
 
@@ -1567,17 +1650,20 @@ int main(int argc, char **argv) {
                 strerror(errno));
     }
     fprintf(stderr,
-            "roadcastd: source=%s pid=%d frames=%zu/%zu hz=%u socket=%s\n",
+            "roadcastd: source=%s pid=%d frames=%zu/%zu hz=%u buckets=%zu "
+            "socket=%s\n",
             fake ? "fake" : "vhal", initial_pid, initial_frames,
-            ROADCAST_FRAME_COUNT, server.hz, socket_name);
+            ROADCAST_FRAME_COUNT, server->hz, server->buckets.channel_count,
+            socket_name);
 
-    uv_run(&server.loop, UV_RUN_DEFAULT);
-    server_shutdown(&server);
-    uv_run(&server.loop, UV_RUN_DEFAULT);
-    int close_result = uv_loop_close(&server.loop);
-    if (server.socket_path[0])
-        unlink(server.socket_path);
-    sampler_destroy(&server.sampler);
+    uv_run(&server->loop, UV_RUN_DEFAULT);
+    server_shutdown(server);
+    uv_run(&server->loop, UV_RUN_DEFAULT);
+    int close_result = uv_loop_close(&server->loop);
+    if (server->socket_path[0])
+        unlink(server->socket_path);
+    sampler_destroy(&server->sampler);
+    free(server);
     if (close_result < 0) {
         fprintf(stderr, "Failed to close event loop: %s\n",
                 uv_strerror(close_result));

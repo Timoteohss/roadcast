@@ -76,7 +76,8 @@ int roadcast_decode_header(const uint8_t in[ROADCAST_HEADER_SIZE],
 size_t roadcast_encode_hello(uint8_t out[8]) {
     put_u16(out, ROADCAST_PROTOCOL_VERSION);
     put_u16(out + 2, ROADCAST_PROTOCOL_VERSION);
-    put_u32(out + 4, ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN);
+    put_u32(out + 4, ROADCAST_CAP_RAW_CAN | ROADCAST_CAP_DECODED_CAN |
+                         ROADCAST_CAP_SIGNAL_BUCKETS);
     return 8;
 }
 
@@ -387,5 +388,100 @@ int roadcast_decode_heartbeat(const uint8_t *payload, size_t len,
     *coalesced_samples = get_u64(payload + 24);
     *effective_hz_millihz = get_u32(payload + 32);
     *source_state = payload[36];
+    return 0;
+}
+
+size_t roadcast_encode_buckets_request(
+    uint8_t out[ROADCAST_BUCKETS_REQUEST_SIZE], uint64_t after_bucket_id,
+    uint32_t signal_index, uint32_t start_offset) {
+    put_u64(out, after_bucket_id);
+    put_u32(out + 8, signal_index);
+    put_u32(out + 12, start_offset);
+    return ROADCAST_BUCKETS_REQUEST_SIZE;
+}
+
+int roadcast_decode_buckets_request(const uint8_t *payload, size_t len,
+                                    uint64_t *after_bucket_id,
+                                    uint32_t *signal_index,
+                                    uint32_t *start_offset) {
+    if (len != ROADCAST_BUCKETS_REQUEST_SIZE)
+        return -1;
+    *after_bucket_id = get_u64(payload);
+    *signal_index = get_u32(payload + 8);
+    *start_offset = get_u32(payload + 12);
+    return 0;
+}
+
+size_t roadcast_encode_buckets_chunk(uint8_t *out, size_t capacity,
+                                     uint64_t latest_bucket_id,
+                                     uint32_t total_count,
+                                     uint32_t start_offset,
+                                     const roadcast_signal_bucket_t *buckets,
+                                     size_t count) {
+    if (count > UINT16_MAX)
+        return 0;
+    size_t required =
+        ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE + count * ROADCAST_BUCKET_WIRE_SIZE;
+    if (required > capacity)
+        return 0;
+    put_u64(out, latest_bucket_id);
+    put_u32(out + 8, total_count);
+    put_u32(out + 12, start_offset);
+    put_u16(out + 16, (uint16_t)count);
+    put_u16(out + 18, 0);
+    for (size_t i = 0; i < count; i++) {
+        uint8_t *rec = out + ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE +
+                       i * ROADCAST_BUCKET_WIRE_SIZE;
+        put_u64(rec, buckets[i].bucket_id);
+        put_u64(rec + 8, buckets[i].start_monotonic_ns);
+        put_u32(rec + 16, buckets[i].signal_index);
+        put_u32(rec + 20, buckets[i].covered_ms);
+        put_double(rec + 24, buckets[i].pos_integral);
+        put_double(rec + 32, buckets[i].neg_integral);
+        put_double(rec + 40, buckets[i].min_val);
+        put_double(rec + 48, buckets[i].max_val);
+        put_double(rec + 56, buckets[i].first_val);
+        put_double(rec + 64, buckets[i].last_val);
+    }
+    return required;
+}
+
+int roadcast_decode_buckets_chunk(const uint8_t *payload, size_t len,
+                                  uint64_t *latest_bucket_id,
+                                  uint32_t *total_count, uint32_t *start_offset,
+                                  roadcast_signal_bucket_t *buckets,
+                                  size_t bucket_capacity,
+                                  size_t *bucket_count) {
+    if (len < ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE)
+        return -1;
+    if (get_u16(payload + 18) != 0)
+        return -1;
+    uint16_t count = get_u16(payload + 16);
+    size_t expected = ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE +
+                      (size_t)count * ROADCAST_BUCKET_WIRE_SIZE;
+    if (expected != len || (size_t)count > bucket_capacity)
+        return -1;
+
+    *latest_bucket_id = get_u64(payload);
+    *total_count = get_u32(payload + 8);
+    *start_offset = get_u32(payload + 12);
+    if (*start_offset > *total_count ||
+        (uint32_t)count > *total_count - *start_offset)
+        return -1;
+    *bucket_count = count;
+    for (size_t i = 0; i < count; i++) {
+        const uint8_t *rec = payload + ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE +
+                             i * ROADCAST_BUCKET_WIRE_SIZE;
+        buckets[i].bucket_id = get_u64(rec);
+        buckets[i].start_monotonic_ns = get_u64(rec + 8);
+        buckets[i].signal_index = get_u32(rec + 16);
+        buckets[i].covered_ms = get_u32(rec + 20);
+        buckets[i].pos_integral = get_double(rec + 24);
+        buckets[i].neg_integral = get_double(rec + 32);
+        buckets[i].min_val = get_double(rec + 40);
+        buckets[i].max_val = get_double(rec + 48);
+        buckets[i].first_val = get_double(rec + 56);
+        buckets[i].last_val = get_double(rec + 64);
+    }
     return 0;
 }

@@ -28,6 +28,9 @@ struct roadcast_client {
     int fd;
     pthread_t reader_thread;
     pthread_mutex_t cache_lock;
+    pthread_mutex_t buckets_req_lock;
+    pthread_cond_t buckets_cond;
+    int locks_initialized;
     atomic_bool stop_requested;
     int reader_started;
 
@@ -37,14 +40,25 @@ struct roadcast_client {
     size_t frame_scratch_capacity;
     roadcast_signal_update_t *signal_scratch;
     size_t signal_scratch_capacity;
+    roadcast_signal_bucket_t *bucket_scratch;
+    size_t bucket_scratch_capacity;
     roadcast_schema_entry_t *schema;
     roadcast_frame_t *frames;
     roadcast_signal_value_t *signals;
     uint16_t can_id_to_index[CAN_ID_LOOKUP_CAP];
 
+    int buckets_waiting;
+    int buckets_ready;
+    int buckets_error;
+    uint64_t buckets_latest_id;
+    uint32_t buckets_total_count;
+    uint32_t buckets_chunk_offset;
+    size_t buckets_chunk_count;
+
     uint32_t hz;
     uint32_t frame_count;
     uint32_t signal_count;
+    uint32_t capabilities;
     uint32_t schema_version;
     uint64_t schema_hash;
     uint32_t max_request_payload;
@@ -672,9 +686,47 @@ static int apply_heartbeat(roadcast_client_t *client,
     return 0;
 }
 
+static int apply_buckets_chunk(roadcast_client_t *client,
+                               const roadcast_header_t *header) {
+    uint64_t latest_id;
+    uint32_t total_count;
+    uint32_t start_offset;
+    size_t count;
+    int decode_rc = roadcast_decode_buckets_chunk(
+        client->payload, header->payload_bytes, &latest_id, &total_count,
+        &start_offset, client->bucket_scratch, client->bucket_scratch_capacity,
+        &count);
+    pthread_mutex_lock(&client->cache_lock);
+    if (decode_rc < 0) {
+        if (client->buckets_waiting) {
+            client->buckets_error = ROADCAST_CLIENT_ERR_PROTOCOL;
+            client->buckets_ready = 1;
+            pthread_cond_broadcast(&client->buckets_cond);
+        }
+        pthread_mutex_unlock(&client->cache_lock);
+        return -1;
+    }
+    if (client->buckets_waiting) {
+        client->buckets_latest_id = latest_id;
+        client->buckets_total_count = total_count;
+        client->buckets_chunk_offset = start_offset;
+        client->buckets_chunk_count = count;
+        client->buckets_error = ROADCAST_CLIENT_OK;
+        client->buckets_ready = 1;
+        pthread_cond_broadcast(&client->buckets_cond);
+    }
+    pthread_mutex_unlock(&client->cache_lock);
+    return 0;
+}
+
 static void mark_disconnected(roadcast_client_t *client) {
     pthread_mutex_lock(&client->cache_lock);
     client->connected = 0;
+    if (client->buckets_waiting) {
+        client->buckets_error = ROADCAST_CLIENT_ERR_SOCKET;
+        client->buckets_ready = 1;
+        pthread_cond_broadcast(&client->buckets_cond);
+    }
     pthread_mutex_unlock(&client->cache_lock);
 }
 
@@ -695,6 +747,9 @@ static void *reader_thread_main(void *argument) {
             break;
         case ROADCAST_MSG_HEARTBEAT:
             result = apply_heartbeat(client, &header);
+            break;
+        case ROADCAST_MSG_BUCKETS_CHUNK:
+            result = apply_buckets_chunk(client, &header);
             break;
         case ROADCAST_MSG_RESYNC_REQUIRED:
             result = header.payload_bytes == 0 ? resynchronize(client) : -1;
@@ -735,6 +790,7 @@ static int perform_handshake(roadcast_client_t *client, uint64_t deadline_ns) {
         client->max_response_payload < ROADCAST_WELCOME_SIZE ||
         client->max_response_payload > ROADCAST_MAX_PAYLOAD)
         return -1;
+    client->capabilities = capabilities;
     return 0;
 }
 
@@ -768,6 +824,24 @@ roadcast_client_t *roadcast_client_connect(const char *socket_name,
         free(client);
         return NULL;
     }
+    if (pthread_mutex_init(&client->buckets_req_lock, NULL) != 0) {
+        pthread_mutex_destroy(&client->cache_lock);
+        if (error)
+            *error = ROADCAST_CLIENT_ERR_MEMORY;
+        free(client->payload);
+        free(client);
+        return NULL;
+    }
+    if (pthread_cond_init(&client->buckets_cond, NULL) != 0) {
+        pthread_mutex_destroy(&client->buckets_req_lock);
+        pthread_mutex_destroy(&client->cache_lock);
+        if (error)
+            *error = ROADCAST_CLIENT_ERR_MEMORY;
+        free(client->payload);
+        free(client);
+        return NULL;
+    }
+    client->locks_initialized = 1;
     atomic_init(&client->stop_requested, false);
 
     int failure = ROADCAST_CLIENT_ERR_SOCKET;
@@ -796,12 +870,23 @@ roadcast_client_t *roadcast_client_connect(const char *socket_name,
     client->signal_scratch_capacity =
         (client->max_response_payload - ROADCAST_BATCH_PREFIX_SIZE) /
         ROADCAST_SIGNAL_WIRE_SIZE;
+    client->bucket_scratch_capacity =
+        client->max_response_payload > ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE
+            ? (client->max_response_payload -
+               ROADCAST_BUCKETS_CHUNK_PREFIX_SIZE) /
+                  ROADCAST_BUCKET_WIRE_SIZE
+            : 1u;
+    if (!client->bucket_scratch_capacity)
+        client->bucket_scratch_capacity = 1u;
     client->frame_scratch =
         calloc(client->frame_scratch_capacity, sizeof(*client->frame_scratch));
     client->signal_scratch = calloc(client->signal_scratch_capacity,
                                     sizeof(*client->signal_scratch));
+    client->bucket_scratch = calloc(client->bucket_scratch_capacity,
+                                    sizeof(*client->bucket_scratch));
     if (!client->schema || !client->frames || !client->signals ||
-        !client->frame_scratch || !client->signal_scratch) {
+        !client->frame_scratch || !client->signal_scratch ||
+        !client->bucket_scratch) {
         failure = ROADCAST_CLIENT_ERR_MEMORY;
         goto fail;
     }
@@ -849,10 +934,15 @@ void roadcast_client_close(roadcast_client_t *client) {
         pthread_join(client->reader_thread, NULL);
     if (client->fd >= 0)
         close(client->fd);
-    pthread_mutex_destroy(&client->cache_lock);
+    if (client->locks_initialized) {
+        pthread_cond_destroy(&client->buckets_cond);
+        pthread_mutex_destroy(&client->buckets_req_lock);
+        pthread_mutex_destroy(&client->cache_lock);
+    }
     free(client->payload);
     free(client->frame_scratch);
     free(client->signal_scratch);
+    free(client->bucket_scratch);
     free(client->schema);
     free(client->frames);
     free(client->signals);
@@ -882,6 +972,10 @@ int roadcast_client_status(roadcast_client_t *client,
     };
     pthread_mutex_unlock(&client->cache_lock);
     return ROADCAST_CLIENT_OK;
+}
+
+uint32_t roadcast_client_capabilities(const roadcast_client_t *client) {
+    return client ? client->capabilities : 0u;
 }
 
 const roadcast_schema_entry_t *
@@ -965,6 +1059,107 @@ int32_t roadcast_client_read_all(roadcast_client_t *client,
     return (int32_t)client->signal_count;
 }
 
+int roadcast_client_read_buckets(roadcast_client_t *client,
+                                 uint64_t after_bucket_id,
+                                 uint32_t signal_index,
+                                 roadcast_signal_bucket_t *buckets,
+                                 size_t capacity, size_t *out_count,
+                                 uint64_t *latest_bucket_id) {
+    if (!client || (!buckets && capacity) || !out_count)
+        return ROADCAST_CLIENT_ERR_ARGUMENT;
+    *out_count = 0;
+    if (latest_bucket_id)
+        *latest_bucket_id = 0;
+    if (!(client->capabilities & ROADCAST_CAP_SIGNAL_BUCKETS))
+        return ROADCAST_CLIENT_ERR_UNSUPPORTED;
+
+    pthread_mutex_lock(&client->buckets_req_lock);
+    size_t collected = 0;
+    uint32_t next_offset = 0;
+    uint32_t total_count = 0;
+    int status = ROADCAST_CLIENT_OK;
+
+    for (;;) {
+        pthread_mutex_lock(&client->cache_lock);
+        if (!client->connected ||
+            atomic_load_explicit(&client->stop_requested,
+                                 memory_order_acquire)) {
+            pthread_mutex_unlock(&client->cache_lock);
+            status = ROADCAST_CLIENT_ERR_SOCKET;
+            break;
+        }
+        client->buckets_waiting = 1;
+        client->buckets_ready = 0;
+        client->buckets_error = ROADCAST_CLIENT_OK;
+        pthread_mutex_unlock(&client->cache_lock);
+
+        uint8_t req[ROADCAST_BUCKETS_REQUEST_SIZE];
+        size_t req_len = roadcast_encode_buckets_request(
+            req, after_bucket_id, signal_index, next_offset);
+        if (send_message(client, ROADCAST_MSG_GET_BUCKETS, req, req_len, 0) <
+            0) {
+            pthread_mutex_lock(&client->cache_lock);
+            client->buckets_waiting = 0;
+            pthread_mutex_unlock(&client->cache_lock);
+            status = ROADCAST_CLIENT_ERR_SOCKET;
+            break;
+        }
+
+        struct timespec abs_timeout;
+        clock_gettime(CLOCK_REALTIME, &abs_timeout);
+        abs_timeout.tv_sec += CLIENT_READ_TIMEOUT_MS / 1000;
+        abs_timeout.tv_nsec += (long)(CLIENT_READ_TIMEOUT_MS % 1000) * 1000000L;
+        if (abs_timeout.tv_nsec >= 1000000000L) {
+            abs_timeout.tv_sec += 1;
+            abs_timeout.tv_nsec -= 1000000000L;
+        }
+
+        pthread_mutex_lock(&client->cache_lock);
+        while (!client->buckets_ready && client->connected &&
+               !atomic_load_explicit(&client->stop_requested,
+                                     memory_order_acquire)) {
+            int wrc = pthread_cond_timedwait(&client->buckets_cond,
+                                             &client->cache_lock, &abs_timeout);
+            if (wrc == ETIMEDOUT) {
+                client->buckets_error = ROADCAST_CLIENT_ERR_TIMEOUT;
+                break;
+            }
+        }
+        client->buckets_waiting = 0;
+        if (!client->buckets_ready) {
+            status = client->buckets_error != ROADCAST_CLIENT_OK
+                         ? client->buckets_error
+                         : ROADCAST_CLIENT_ERR_SOCKET;
+            pthread_mutex_unlock(&client->cache_lock);
+            break;
+        }
+        if (client->buckets_error != ROADCAST_CLIENT_OK) {
+            status = client->buckets_error;
+            pthread_mutex_unlock(&client->cache_lock);
+            break;
+        }
+
+        if (latest_bucket_id)
+            *latest_bucket_id = client->buckets_latest_id;
+        total_count = client->buckets_total_count;
+        size_t chunk_count = client->buckets_chunk_count;
+        for (size_t i = 0; i < chunk_count && collected < capacity; i++) {
+            buckets[collected++] = client->bucket_scratch[i];
+        }
+        pthread_mutex_unlock(&client->cache_lock);
+
+        next_offset += (uint32_t)chunk_count;
+        if (chunk_count == 0 || next_offset >= total_count ||
+            collected >= capacity)
+            break;
+    }
+
+    pthread_mutex_unlock(&client->buckets_req_lock);
+    if (status == ROADCAST_CLIENT_OK)
+        *out_count = collected;
+    return status;
+}
+
 int64_t roadcast_client_sample_age_ns(roadcast_client_t *client) {
     if (!client)
         return -1;
@@ -999,6 +1194,10 @@ const char *roadcast_client_error_string(int error) {
         return "native allocation failed";
     case ROADCAST_CLIENT_ERR_THREAD:
         return "reader thread creation failed";
+    case ROADCAST_CLIENT_ERR_UNSUPPORTED:
+        return "feature not supported by daemon";
+    case ROADCAST_CLIENT_ERR_TIMEOUT:
+        return "request timed out";
     default:
         return "unknown client error";
     }

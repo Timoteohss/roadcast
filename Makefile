@@ -41,10 +41,10 @@ generate: | $(BUILD_DIR)
 	scripts/generate-catalog.py
 	@touch $(BUILD_DIR)/.catalog.stamp
 
-$(BUILD_DIR)/roadcastd: src/roadcastd.c $(SOURCE_SOURCES) $(COMMON_SOURCES) $(CATALOG_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/roadcastd: src/roadcastd.c $(SOURCE_SOURCES) src/buckets.c $(COMMON_SOURCES) $(CATALOG_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(LIBUV_CFLAGS) $(LIBELF_CFLAGS) $(CFLAGS) \
-		$(LDFLAGS) -o $@ src/roadcastd.c $(SOURCE_SOURCES) \
-		$(COMMON_SOURCES) $(CATALOG_SOURCES) $(LIBUV_LIBS) -pthread
+		$(LDFLAGS) -o $@ src/roadcastd.c $(SOURCE_SOURCES) src/buckets.c \
+		$(COMMON_SOURCES) $(CATALOG_SOURCES) $(LIBUV_LIBS) -pthread -lm
 
 $(BUILD_DIR)/roadcastctl: src/roadcastctl.c $(COMMON_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
@@ -79,12 +79,20 @@ $(BUILD_DIR)/test_client_deadlines: tests/test_client_deadlines.c $(BUILD_DIR)/l
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
 		tests/test_client_deadlines.c $(BUILD_DIR)/libroadcast_client.a -pthread
 
+$(BUILD_DIR)/test_buckets: tests/test_buckets.c src/buckets.c $(COMMON_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
+		tests/test_buckets.c src/buckets.c $(COMMON_SOURCES) -lm
+
+$(BUILD_DIR)/test_buckets_e2e: tests/test_buckets_e2e.c $(BUILD_DIR)/libroadcast_client.a $(COMMON_HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
+		tests/test_buckets_e2e.c $(BUILD_DIR)/libroadcast_client.a -pthread
+
 $(BUILD_DIR)/idle_clients: tests/idle_clients.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/idle_clients.c
 
-$(BUILD_DIR)/test_distribution: tests/test_distribution.c src/roadcastd.c $(SOURCE_SOURCES) $(COMMON_SOURCES) $(CATALOG_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/test_distribution: tests/test_distribution.c src/roadcastd.c $(SOURCE_SOURCES) src/buckets.c $(COMMON_SOURCES) $(CATALOG_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(LIBUV_CFLAGS) $(LIBELF_CFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
-		tests/test_distribution.c $(SOURCE_SOURCES) $(COMMON_SOURCES) $(CATALOG_SOURCES) $(LIBUV_LIBS) -pthread
+		tests/test_distribution.c $(SOURCE_SOURCES) src/buckets.c $(COMMON_SOURCES) $(CATALOG_SOURCES) $(LIBUV_LIBS) -pthread -lm
 
 $(BUILD_DIR)/test_source_session: tests/test_source_session.c src/source_session.c $(COMMON_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/test_source_session.c
@@ -95,7 +103,7 @@ $(BUILD_DIR)/test_vhal_source: tests/test_vhal_source.c src/vhal_source.c $(COMM
 $(BUILD_DIR)/source_recovery_watch: tests/source_recovery_watch.c $(BUILD_DIR)/libroadcast_client.a $(COMMON_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ tests/source_recovery_watch.c $(BUILD_DIR)/libroadcast_client.a -pthread
 
-test: $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_catalog $(BUILD_DIR)/test_vhal_elf $(BUILD_DIR)/test_client_deadlines $(BUILD_DIR)/test_distribution $(BUILD_DIR)/test_source_session $(BUILD_DIR)/test_vhal_source
+test: $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_catalog $(BUILD_DIR)/test_vhal_elf $(BUILD_DIR)/test_client_deadlines $(BUILD_DIR)/test_distribution $(BUILD_DIR)/test_source_session $(BUILD_DIR)/test_vhal_source $(BUILD_DIR)/test_buckets
 	$(BUILD_DIR)/test_protocol
 	$(BUILD_DIR)/test_catalog
 	$(BUILD_DIR)/test_vhal_elf
@@ -103,12 +111,14 @@ test: $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_catalog $(BUILD_DIR)/test_vha
 	$(BUILD_DIR)/test_distribution
 	$(BUILD_DIR)/test_source_session
 	$(BUILD_DIR)/test_vhal_source
+	$(BUILD_DIR)/test_buckets
 
-integration: all $(BUILD_DIR)/idle_clients $(BUILD_DIR)/test_vhal_source $(BUILD_DIR)/source_recovery_watch
+integration: all $(BUILD_DIR)/idle_clients $(BUILD_DIR)/test_vhal_source $(BUILD_DIR)/source_recovery_watch $(BUILD_DIR)/test_buckets_e2e
 	tests/catchup_integration.sh
 	tests/integration.sh
 	bash tests/dense_integration.sh
 	sh tests/recovery_integration.sh
+	$(BUILD_DIR)/test_buckets_e2e
 
 android:
 	scripts/build-android.sh
